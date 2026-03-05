@@ -1,0 +1,52 @@
+# ====== DEPENDENCIES ======
+node_modules
+
+# ====== BUILD OUTPUT ======
+out
+dist
+*.tgz
+
+# ====== WORKTREES ======
+.worktrees
+
+# ====== LOGS ======
+logs
+*.log
+
+# ====== ENVIRONMENT ======
+.env
+.env.local
+.env.*.local
+
+# ====== CACHES ======
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# ====== IDE ======
+.idea
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# ====== OS FILES ======
+.DS_Store
+Thumbs.db
+
+# ====== DATABASES (project root only - ws/ is tracked) ======
+*.db
+*.db-shm
+*.db-wal
+
+# ====== DOCKER ======
+# Keep docker-compose.yml and Dockerfile
+*.tar
+*.tar.gz
+s3pia-deploy/
+docker-compose.override.yml
+
+# ====== TEST COVERAGE ======
+coverage
+*.lcov

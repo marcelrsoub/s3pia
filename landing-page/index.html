@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>S3pia - Autonomous AI Assistant</title>
+  <meta name="description" content="An AI assistant with immediate conversational responses and autonomous background code execution. Single Docker container, multiple AI providers.">
+  <link rel="icon" href="https://s3pia.ai/favicon.png" type="image/png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="crt-effects">
+    <div class="scanlines"></div>
+    <div class="noise"></div>
+    <div class="vignette"></div>
+    <div class="glow"></div>
+  </div>
+  
+  <div class="page-content">
+    <section class="hero">
+      <div class="container">
+        <img src="assets/logo.svg" alt="S3pia" class="logo">
+        <p class="tagline">
+          An autonomous AI assistant that runs in the background, so you don't have to<span class="cursor"></span>
+        </p>
+        
+        <div class="install-command" onclick="copyInstall()">
+          <span class="prompt">$</span>
+          <code>curl -fsSL https://raw.githubusercontent.com/marcelrsoub/s3pia/main/install.sh | bash</code>
+          <button class="copy-btn" id="copy-btn" title="Copy to clipboard">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
+        </div>
+        
+        <div class="cta-buttons">
+          <a href="https://github.com/marcelrsoub/s3pia" class="btn btn-primary">View on GitHub</a>
+          <a href="https://github.com/marcelrsoub/s3pia#readme" class="btn btn-secondary">Documentation</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <h2 class="section-title">Features</h2>
+        <div class="features-grid">
+          <div class="feature-card">
+            <div class="feature-icon">📦</div>
+            <h3 class="feature-title">Single Container</h3>
+            <p class="feature-desc">One Docker container, one command install. No complex setup, no dependencies to manage.</p>
+          </div>
+          
+          <div class="feature-card">
+            <div class="feature-icon">💬</div>
+            <h3 class="feature-title">Web Interface</h3>
+            <p class="feature-desc">Chat with S3pia in your browser with a retro CRT-styled interface.</p>
+          </div>
+          
+          <div class="feature-card">
+            <div class="feature-icon">📱</div>
+            <h3 class="feature-title">Telegram</h3>
+            <p class="feature-desc">Connect via Telegram bot for mobile access and notifications.</p>
+          </div>
+          
+          <div class="feature-card">
+            <div class="feature-icon">🧠</div>
+            <h3 class="feature-title">Memory</h3>
+            <p class="feature-desc">Persistent long-term memory across conversations. Remembers context and preferences.</p>
+          </div>
+          
+          <div class="feature-card">
+            <div class="feature-icon">✨</div>
+            <h3 class="feature-title">Soul & Identity</h3>
+            <p class="feature-desc">Customizable personality that evolves over time. Make it truly yours.</p>
+          </div>
+          
+          <div class="feature-card">
+            <div class="feature-icon">⏰</div>
+            <h3 class="feature-title">Scheduled Tasks</h3>
+            <p class="feature-desc">Cron-style background jobs and reminders. Set it and forget it.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section screenshot-section">
+      <div class="container">
+        <h2 class="section-title">Configure in Browser</h2>
+        <div class="screenshot-wrapper">
+          <img src="assets/env_edit.png" alt="S3pia configuration interface showing API key setup">
+        </div>
+        <p class="screenshot-caption">Add your API key and start chatting in seconds</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <h2 class="section-title">Quick Start</h2>
+        <div class="quickstart">
+          <div class="steps">
+            <div class="step">
+              <div class="step-number">01</div>
+              <div class="step-content">
+                <h3>Install</h3>
+                <p>Run the install command. It checks Docker, clones the repo, and starts the container.</p>
+              </div>
+            </div>
+            
+            <div class="step">
+              <div class="step-number">02</div>
+              <div class="step-content">
+                <h3>Configure</h3>
+                <p>Open the web UI at localhost:3210, click the gear icon, and add your API key from any supported provider.</p>
+              </div>
+            </div>
+            
+            <div class="step">
+              <div class="step-number">03</div>
+              <div class="step-content">
+                <h3>Chat</h3>
+                <p>Start talking to your assistant. It responds instantly and handles tasks in the background.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-content">
+          <p class="footer-text">S3pia • MIT License • Made by <a href="https://github.com/marcelrsoub" class="footer-link">Marcel</a></p>
+          <div class="footer-links">
+            <a href="https://github.com/marcelrsoub/s3pia">GitHub</a>
+            <a href="https://github.com/marcelrsoub/s3pia#readme">Docs</a>
+            <a href="https://github.com/marcelrsoub/s3pia/blob/main/docs/telegram.md">Telegram Setup</a>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    // Scroll reveal animation
+    const observerOptions = {
+      threshold: 0.1,
+      rootMargin: '0px 0px -50px 0px'
+    };
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry, index) => {
+        if (entry.isIntersecting) {
+          setTimeout(() => {
+            entry.target.classList.add('visible');
+          }, index * 100);
+        }
+      });
+    }, observerOptions);
+
+    document.querySelectorAll('.feature-card, .step').forEach(el => {
+      observer.observe(el);
+    });
+
+    // Copy to clipboard function
+    function copyInstall() {
+      const cmd = 'curl -fsSL https://raw.githubusercontent.com/marcelrsoub/s3pia/main/install.sh | bash';
+      navigator.clipboard.writeText(cmd).then(() => {
+        const btn = document.getElementById('copy-btn');
+        btn.classList.add('copied');
+        btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        setTimeout(() => {
+          btn.classList.remove('copied');
+          btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+        }, 2000);
+      });
+    }
+  </script>
+</body>
+</html>

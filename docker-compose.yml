@@ -1,0 +1,21 @@
+services:
+  s3pia:
+    build: .
+    container_name: s3pia
+    ports:
+      - "3210:3210"
+    environment:
+      - PORT=3210
+    volumes:
+      - s3pia-workspace:/app/ws
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3210/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  s3pia-workspace:
+    driver: local

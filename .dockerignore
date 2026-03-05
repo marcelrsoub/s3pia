@@ -1,0 +1,37 @@
+# Dependencies
+node_modules
+
+# Local environment files
+.env
+.env.local
+.env.*.local
+
+# Git
+.git
+.gitignore
+
+# Documentation (not needed in container)
+README.md
+CLAUDE.md
+ROADMAP.md
+docs
+
+# IDE
+.vscode
+.idea
+
+# OS files
+.DS_Store
+
+# Logs and databases (from local development)
+*.log
+*.db
+*.db-shm
+*.db-wal
+
+# Test files
+*.test.ts
+test-*.ts
+
+# Build artifacts that will be created in container
+# (frontend/dist is included, but nothing else)
