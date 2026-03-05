@@ -1,6 +1,6 @@
 <p align="center"><img src="frontend/public/logo.svg" alt="S3pia" width="400"></p>
 
-A lightweight AI assistant that runs in a single Docker container. Simple, self-contained, and ready to deploy.
+A simple self-contained AI assistant, inspired by OpenClaw, that runs in a single Docker container. Simple, self-contained, and ready to deploy.
 
 ## Features
 
