@@ -1,6 +1,6 @@
 <p align="center"><img src="frontend/public/logo.svg" alt="S3pia" width="400"></p>
 
-An AI assistant with immediate conversational responses and autonomous background code execution.
+An AI assistant with autonomous background code execution.
 
 A lightweight, Docker-focused version of [OpenClaw](https://github.com/openclaw/openclaw).
 
@@ -28,10 +28,6 @@ One command. The installer checks Docker, clones the repo, and starts a single c
 
 Then open **http://localhost:3210** and add your API key via the gear icon.
 
-<p align="center">
-  <img src="assets/env_edit.png" alt="Environment Configuration" width="600">
-</p>
-
 ## Requirements
 
 - [Docker](https://docs.docker.com/get-docker/)
@@ -49,21 +45,21 @@ Then open **http://localhost:3210** and add your API key via the gear icon.
 | Groq | [console.groq.com](https://console.groq.com) |
 | Gemini | [ai.google.dev](https://ai.google.dev) |
 
-## What It Does
+## How It Works
 
-**Instant replies, background work:**
-- Chat with S3pia → get an immediate response
-- Code changes and tasks run in the background
+**Chat with S3pia, get responses. Tasks run in the background:**
+- S3pia processes your messages
+- Code changes and tasks execute asynchronously
 - Results appear as follow-up messages automatically
 
 ```
 You: Update my IDENTITY.md to say my name is Marcel
 
-S3pia: I'll update your IDENTITY.md for you.    [instant]
+S3pia: I'll update your IDENTITY.md for you.
 
 [background execution...]
 
-S3pia: Done! Updated your IDENTITY.md.          [auto follow-up]
+S3pia: Done! Updated your IDENTITY.md.
 ```
 
 ## File Structure
@@ -77,10 +73,29 @@ Your data lives in a Docker volume at `/app/ws`:
 ├── SOUL.md           # Bot's personality
 ├── tasks/scheduled.md # Scheduled tasks
 ├── memory/context.md  # Long-term memory
+├── skills/*.md        # Deterministic recipes (agent can create new)
 └── config/.env       # API keys and settings
 ```
 
 Edit these files directly — changes are immediately available.
+
+## Scheduling & Tasks
+
+S3pia uses a file-system based scheduling mechanism (inspired by OpenClaw):
+
+- Tasks are defined in `tasks/scheduled.md`
+- Agent reads tasks every 30 minutes
+- Tasks can be one-time or recurring (cron-style)
+- The agent can create its own scheduled tasks
+
+## Skills
+
+S3pia comes with prebuilt skills for common tasks:
+- **Web Browsing** — Search the web, read articles
+- **Image Generation** — Create images with FAL AI
+- **Task Scheduling** — Schedule reminders and background jobs
+
+The agent can also create custom skills by writing markdown recipes to the `skills/` folder.
 
 ## Mounting Additional Volumes
 
@@ -89,11 +104,21 @@ You can mount additional directories to give the agent access to external data:
 ```yaml
 services:
   s3pia:
-    # ... existing config ...
+    image: marcelrsoub/s3pia:latest
+    container_name: s3pia
+    restart: unless-stopped
+    
     volumes:
       - s3pia-workspace:/app/ws
-      - /path/on/host/data:/data          # Add your volume here
-      - /path/on/host/documents:/docs      # Add more volumes as needed
+      - /path/on/host/data:/app/ws/data          # Access to external data
+      - /path/on/host/documents:/app/ws/docs    # Access to documents
+      - /path/on/host/projects:/app/ws/projects  # Access to projects
+    
+    ports:
+      - "3210:3210"
+    
+    environment:
+      - TELEGRAM_ENABLED=true
 ```
 
 The agent can then access these paths directly:
