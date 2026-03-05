@@ -64,10 +64,10 @@ S3pia: Done! Updated your IDENTITY.md.
 
 ## File Structure
 
-Your data lives in a Docker volume at `/app/ws`:
+Your data lives in a Docker volume:
 
 ```
-/app/ws/
+/app/
 ├── IDENTITY.md       # Bot's identity (evolves over time)
 ├── USER.md           # Info about you
 ├── SOUL.md           # Bot's personality
@@ -109,10 +109,10 @@ services:
     restart: unless-stopped
     
     volumes:
-      - s3pia-workspace:/app/ws
-      - /path/on/host/data:/app/ws/data          # Access to external data
-      - /path/on/host/documents:/app/ws/docs    # Access to documents
-      - /path/on/host/projects:/app/ws/projects  # Access to projects
+      - s3pia-workspace:/app
+      - /path/on/host/data:/app/data        # Access to external data
+      - /path/on/host/documents:/app/docs   # Access to documents
+      - /path/on/host/projects:/app/projects # Access to projects
     
     ports:
       - "3210:3210"
