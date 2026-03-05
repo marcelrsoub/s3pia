@@ -67,14 +67,18 @@ S3pia: Done! Updated your IDENTITY.md.
 Your data lives in a Docker volume:
 
 ```
-/app/
+/app/ws/
 ├── IDENTITY.md       # Bot's identity (evolves over time)
 ├── USER.md           # Info about you
 ├── SOUL.md           # Bot's personality
-├── tasks/scheduled.md # Scheduled tasks
-├── memory/context.md  # Long-term memory
-├── skills/*.md        # Deterministic recipes (agent can create new)
-└── config/.env       # API keys and settings
+├── BOOTSTRAP.md     # Initial setup instructions
+├── config/           # API keys and settings
+├── memory/           # Long-term memory
+│   └── context.md
+├── skills/           # Prebuilt and custom skills
+├── tasks/            # Scheduled tasks
+│   └── scheduled.md
+└── temp/            # Temporary files
 ```
 
 Edit these files directly — changes are immediately available.
@@ -99,7 +103,7 @@ The agent can also create custom skills by writing markdown recipes to the `skil
 
 ## Mounting Additional Volumes
 
-You can mount additional directories to give the agent access to external data:
+You can mount an additional directory to give the agent access to external data:
 
 ```yaml
 services:
@@ -109,10 +113,8 @@ services:
     restart: unless-stopped
     
     volumes:
-      - s3pia-workspace:/app
-      - /path/on/host/data:/app/data        # Access to external data
-      - /path/on/host/documents:/app/docs   # Access to documents
-      - /path/on/host/projects:/app/projects # Access to projects
+      - s3pia-workspace:/app/ws
+      - /path/on/host/custom:/app/custom        # Access to external folder
     
     ports:
       - "3210:3210"
@@ -121,10 +123,10 @@ services:
       - TELEGRAM_ENABLED=true
 ```
 
-The agent can then access these paths directly:
-- `list_dir /data` — list contents of mounted volume
-- `read_file /data/file.txt` — read files in mounted volume
-- `write_file /data/output.txt` — write files to mounted volume
+The agent can then access this path directly:
+- `list_dir /custom` — list contents of mounted volume
+- `read_file /custom/file.txt` — read files in mounted volume
+- `write_file /custom/output.txt` — write files to mounted volume
 
 ## Commands
 
