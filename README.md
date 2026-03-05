@@ -1,12 +1,10 @@
 <p align="center"><img src="frontend/public/logo.svg" alt="S3pia" width="400"></p>
 
-An AI assistant with autonomous background code execution.
-
-A lightweight, Docker-focused version of [OpenClaw](https://github.com/openclaw/openclaw).
+A lightweight AI assistant that runs in a single Docker container. Simple, self-contained, and ready to deploy.
 
 ## Features
 
-- **Single Docker Container** — Simple install, one command setup
+- **Single Docker Container** — Everything runs in one container. No complex setup, no external dependencies.
 - **Web Interface** — Chat with S3pia in your browser
 - **Telegram** — Connect via Telegram bot
 - **Memory** — Persistent long-term memory across conversations
