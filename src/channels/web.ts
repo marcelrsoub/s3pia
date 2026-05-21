@@ -108,7 +108,7 @@ export class WebChannel extends BaseChannel {
 	 */
 	async stop(): Promise<void> {
 		// Close all connections
-		for (const [convId, connections] of this.state.connections) {
+		for (const [_convId, connections] of this.state.connections) {
 			for (const ws of connections) {
 				if (ws.readyState === WebSocket.OPEN) {
 					ws.close();
@@ -402,6 +402,6 @@ export class WebChannel extends BaseChannel {
 export function createWebChannel(): WebChannel {
 	return new WebChannel({
 		enabled: true,
-		allowFrom: [], // Web UI is open to all
+		allowFrom: [], // Web channel is open to all
 	});
 }

@@ -316,7 +316,7 @@ export function startServer() {
 	});
 
 	console.log(`HTTP server listening on http://localhost:${server.port}`);
-	console.log(`Web UI available at http://localhost:${server.port}`);
+	console.log(`Dashboard available at http://localhost:${server.port}`);
 
 	return server;
 }

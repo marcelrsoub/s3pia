@@ -27,14 +27,6 @@ interface ChatRequest {
 	conversationId?: string;
 }
 
-interface ErrorResponse {
-	error: string;
-}
-
-interface ChatResponse {
-	reply: string;
-}
-
 /**
  * Create standardized error response
  */
@@ -131,7 +123,7 @@ export async function handleChat(request: Request): Promise<Response> {
 		}
 
 		return createSuccessResponse({ reply });
-	} catch (err) {
+	} catch (_err) {
 		console.error("[handleChat] Error:", err);
 		return createErrorResponse(
 			err instanceof Error ? err.message : "Internal server error",
@@ -203,7 +195,7 @@ export async function handleChatStream(request: Request): Promise<Response> {
 						body.source,
 					);
 				}
-			} catch (err) {
+			} catch (_err) {
 				controller.enqueue(
 					encoder.encode(
 						`data: ${JSON.stringify({ error: "Processing failed" })}\n\n`,
@@ -271,7 +263,7 @@ export async function handleGetEnv(): Promise<Response> {
 			status: 200,
 			headers: { "Content-Type": "text/plain" },
 		});
-	} catch (err) {
+	} catch (_err) {
 		console.error("[GetEnv] Error:", err);
 		return createErrorResponse("Failed to load .env file");
 	}
@@ -317,7 +309,7 @@ export async function handleUpdateEnv(request: Request): Promise<Response> {
 			updated: true,
 			message: "Environment variables saved successfully",
 		});
-	} catch (err) {
+	} catch (_err) {
 		console.error("[UpdateEnv] Error:", err);
 		return createErrorResponse("Failed to update .env file");
 	}
@@ -358,7 +350,7 @@ export async function handleUpdateConfig(request: Request): Promise<Response> {
 		}
 
 		return createSuccessResponse({ updated: true });
-	} catch (err) {
+	} catch (_err) {
 		return createErrorResponse(
 			err instanceof Error ? err.message : "Failed to update config",
 		);
@@ -405,7 +397,7 @@ export async function handleTestZAIKey(request: Request): Promise<Response> {
 			: (await response.json())?.error?.message || "API call failed";
 
 		return createSuccessResponse({ valid, error });
-	} catch (err) {
+	} catch (_err) {
 		return createSuccessResponse({ valid: false, error: "Connection failed" });
 	}
 }
@@ -463,7 +455,7 @@ export async function handleTestConfig(request: Request): Promise<Response> {
 				? undefined
 				: (await response.json())?.error?.message || "API call failed",
 		});
-	} catch (err) {
+	} catch (_err) {
 		return createSuccessResponse({ valid: false, error: "Connection failed" });
 	}
 }
@@ -478,7 +470,10 @@ export async function handleTelegramBotStatus(): Promise<Response> {
 
 	if (!telegramChannel) {
 		return createSuccessResponse({
+			name: "telegram",
+			enabled: false,
 			running: false,
+			configured: false,
 			error: "Telegram channel not configured",
 		});
 	}

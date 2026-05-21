@@ -5,8 +5,8 @@ A simple self-contained AI assistant, inspired by OpenClaw, that runs in a singl
 ## Features
 
 - **Single Docker Container** — Everything runs in one container. No complex setup, no external dependencies.
-- **Web Interface** — Chat with S3pia in your browser
-- **Telegram** — Connect via Telegram bot
+- **Admin Dashboard** — View Telegram status and edit config in the browser
+- **Telegram** — The only interaction channel
 - **Memory** — Persistent long-term memory across conversations
 - **Soul & Identity** — Customizable personality that evolves over time
 - **Scheduled Tasks** — Cron-style background jobs and reminders
@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/marcelrsoub/s3pia/main/install.sh |
 
 One command. The installer checks Docker, clones the repo, and starts a single container.
 
-Then open **http://localhost:3210** and add your API key via the gear icon.
+Then open **http://localhost:3210** to check Telegram status and edit your `.env` settings.
 
 ## Requirements
 
@@ -45,7 +45,7 @@ Then open **http://localhost:3210** and add your API key via the gear icon.
 
 ## How It Works
 
-**Chat with S3pia, get responses. Tasks run in the background:**
+**Telegram messages drive S3pia. Tasks run in the background:**
 - S3pia processes your messages
 - Code changes and tasks execute asynchronously
 - Results appear as follow-up messages automatically

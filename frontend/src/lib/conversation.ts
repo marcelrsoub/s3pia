@@ -1,4 +1,4 @@
-import type { FileAttachment } from "@/hooks/useWebSocket";
+import type { FileAttachment } from "@/lib/channel-types";
 
 /**
  * Default conversation ID for web UI and Telegram

@@ -1,35 +1,39 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-interface BotStatus {
+interface TelegramStatus {
+	name?: string;
+	enabled?: boolean;
 	running: boolean;
-	hasConflict: boolean;
-	hasAuthError: boolean;
+	configured?: boolean;
+	hasConflict?: boolean;
+	hasAuthError?: boolean;
+	error?: string;
 	errorMessage?: string;
 }
 
 export function useBotStatus() {
-	const [botStatus, setBotStatus] = useState<BotStatus | null>(null);
+	const [botStatus, setBotStatus] = useState<TelegramStatus | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
 
-	useEffect(() => {
-		const fetchBotStatus = async () => {
-			try {
-				const response = await fetch("/api/telegram/status");
-				if (response.ok) {
-					const data = (await response.json()) as BotStatus;
-					setBotStatus(data);
-				}
-			} catch (err) {
-				console.error("Failed to fetch bot status:", err);
-			} finally {
-				setIsLoading(false);
+	const fetchBotStatus = useCallback(async () => {
+		try {
+			const response = await fetch("/api/telegram/status");
+			if (response.ok) {
+				const data = (await response.json()) as TelegramStatus;
+				setBotStatus(data);
 			}
-		};
+		} catch (err) {
+			console.error("Failed to fetch bot status:", err);
+		} finally {
+			setIsLoading(false);
+		}
+	}, []);
 
+	useEffect(() => {
 		fetchBotStatus();
 		const interval = setInterval(fetchBotStatus, 5000); // Poll every 5 seconds
 		return () => clearInterval(interval);
-	}, []);
+	}, [fetchBotStatus]);
 
-	return { botStatus, isLoading };
+	return { botStatus, isLoading, refresh: fetchBotStatus };
 }

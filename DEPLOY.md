@@ -68,7 +68,7 @@ TAVILY_API_KEY=your_tavily_key
 PORT=3210
 ```
 
-You can also configure everything through the web UI after first launch.
+You can also configure Telegram status and environment variables through the dashboard after first launch.
 
 ---
 

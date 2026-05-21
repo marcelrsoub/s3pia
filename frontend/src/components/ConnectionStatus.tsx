@@ -1,4 +1,4 @@
-import type { ConnectionStatus } from "@/hooks/useWebSocket";
+import type { ConnectionStatus } from "@/lib/channel-types";
 import { Badge } from "./ui/badge";
 
 interface ConnectionStatusProps {
@@ -13,7 +13,7 @@ const statusConfig = {
 		ledClass: "connected",
 	},
 	connecting: {
-		label: "CONNECT",
+		label: "CHECKING",
 		className:
 			"bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/20 border-yellow-500/20",
 		ledClass: "connecting",
@@ -25,7 +25,7 @@ const statusConfig = {
 		ledClass: "disconnected",
 	},
 	not_configured: {
-		label: "CONFIG",
+		label: "SETUP",
 		className:
 			"bg-orange-500/10 text-orange-500 hover:bg-orange-500/20 border-orange-500/20",
 		ledClass: "not-configured",
