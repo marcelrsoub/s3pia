@@ -34,7 +34,7 @@ Run the same installer command again when you want to update:
 curl -fsSL https://raw.githubusercontent.com/marcelrsoub/s3pia/main/install.sh | bash
 ```
 
-If S3pia is already installed, the installer detects the running container and offers an update path that keeps your existing `/app/ws` bind mount and any other volume bindings intact.
+If S3pia is already installed, the installer detects the existing container. Choose preserve to keep every current volume binding intact.
 
 ## Requirements
 

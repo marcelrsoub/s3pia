@@ -97,7 +97,7 @@ docker-compose up -d
 
 ## Updating
 
-If you installed with `install.sh`, rerun the same command to update. The installer detects the existing container and reuses the current `/app/ws` bind mount, so your data volume bindings stay in place.
+If you installed with `install.sh`, rerun the same command to update. The installer detects the existing container and, if you choose preserve, keeps every current volume binding intact.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/marcelrsoub/s3pia/main/install.sh | bash
