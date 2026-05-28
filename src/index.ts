@@ -21,6 +21,9 @@ import { loadEnvFile, migrateSettingsFromDatabase } from "./env.js";
 await migrateSettingsFromDatabase();
 await loadEnvFile();
 
+const { syncDefaultWorkspaceFiles } = await import("./workspace-sync.js");
+await syncDefaultWorkspaceFiles();
+
 // Now import modules that depend on env vars
 const { conversationStore } = await import("./conversation.js");
 const { getGateway, startGateway, stopGateway } = await import(
