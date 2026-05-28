@@ -11,10 +11,12 @@ A simple self-contained AI assistant, inspired by OpenClaw, that runs in a singl
 - **Soul & Identity** — Customizable personality that evolves over time
 - **Scheduled Tasks** — Cron-style background jobs and reminders
 - **Skills** — Prebuilt recipes + agent can create its own skills
+- **Public Pages** — Agent can generate local pages under `public_pages/`
 - **Browser Access** — Agent can browse the web
 - **Image Generation** — Generate images with FAL AI
 
 **Prebuilt Skills:** Web Browsing • Image Generation • Task Scheduling
+**Generated Pages:** `http://localhost:3210/pages/<page-name>/`
 
 ## Install
 
@@ -84,6 +86,7 @@ Your data lives in a Docker volume:
 ├── memory/           # Long-term memory
 │   └── context.md
 ├── skills/           # Prebuilt and custom skills
+├── public_pages/     # Agent-generated local pages
 ├── tasks/            # Scheduled tasks
 │   └── scheduled.md
 └── temp/            # Temporary files
@@ -108,6 +111,16 @@ S3pia comes with prebuilt skills for common tasks:
 - **Task Scheduling** — Schedule reminders and background jobs
 
 The agent can also create custom skills by writing markdown recipes to the `skills/` folder.
+
+## Public Pages
+
+S3pia can generate local web pages in `public_pages/` and serve them from the main app.
+
+- Write the page into `public_pages/<name>/index.html`
+- Add CSS, JS, and assets beside it
+- Open it at `http://localhost:3210/pages/<name>/`
+
+If you want to expose a page outside the local machine, use a tunnel such as cloudflared, ngrok, or an SSH reverse tunnel.
 
 ## Mounting Additional Volumes
 
