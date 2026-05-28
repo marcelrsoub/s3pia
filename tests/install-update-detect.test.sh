@@ -29,7 +29,7 @@ fi
 if [[ "$*" == *"inspect s3pia --format"*"{{range .Mounts}}{{.Type}}|{{.Source}}|{{.Destination}}|{{.RW}}"* ]]; then
   printf '%s\n' \
     'volume|s3pia_s3pia-workspace|/app/ws|true' \
-    'bind|/host/config|/app/config|true' \
+    "bind|/host/config's|/app/config|true" \
     'bind|/host/custom|/app/custom|false'
   exit 0
 fi
@@ -99,7 +99,7 @@ for expected in \
   "type: volume" \
   "source: 's3pia_s3pia-workspace'" \
   "target: '/app/ws'" \
-  "source: '/host/config'" \
+  "source: '/host/config''s'" \
   "target: '/app/config'" \
   "source: '/host/custom'" \
   "target: '/app/custom'" \

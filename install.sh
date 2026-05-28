@@ -87,6 +87,24 @@ $mount_data
 EOF
 }
 
+# Escape a value for YAML single-quoted scalars.
+yaml_single_quote() {
+    local value="$1"
+    local escaped=""
+    local i char
+
+    for ((i = 0; i < ${#value}; i++)); do
+        char="${value:i:1}"
+        if [ "$char" = "'" ]; then
+            escaped+="''"
+        else
+            escaped+="$char"
+        fi
+    done
+
+    printf "'%s'" "$escaped"
+}
+
 # Read a prompt from the controlling tty when available.
 # Falls back to the supplied default when no tty exists.
 prompt_tty() {
@@ -201,7 +219,7 @@ write_workspace_override() {
             fi
 
             printf "      - type: %s\n" "$mount_type"
-            printf "        source: '%s'\n" "$mount_source"
+            printf "        source: %s\n" "$(yaml_single_quote "$mount_source")"
             printf "        target: '%s'\n" "$mount_destination"
 
             case "$mount_rw" in
