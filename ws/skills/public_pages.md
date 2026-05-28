@@ -27,6 +27,8 @@ Pages are served locally from the main app:
 http://localhost:3210/pages/my-page/
 ```
 
+S3pia already serves these files. Do not start a separate Python/Node static server or file watcher. Edit the files in `public_pages/` and refresh the browser to see changes.
+
 ## Page Rules
 
 - Keep each page self-contained.
@@ -34,6 +36,7 @@ http://localhost:3210/pages/my-page/
 - Put all page-specific assets inside the page folder.
 - Prefer a single `index.html` entry point.
 - Avoid external dependencies unless the user explicitly wants them.
+- Do not run `python -m http.server`, `bunx serve`, or any other page server for these files.
 
 ## Example
 
