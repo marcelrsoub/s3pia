@@ -60,6 +60,33 @@ get_existing_container_mounts() {
     docker inspect s3pia --format '{{range .Mounts}}{{.Type}}|{{.Source}}|{{.Destination}}|{{.RW}}{{"\n"}}{{end}}' 2>/dev/null || true
 }
 
+# Print a readable summary of existing mounts.
+print_mount_summary() {
+    local mount_data="$1"
+    local mount_type mount_source mount_destination mount_rw mount_access
+
+    [ -z "$mount_data" ] && return
+
+    msg "$YELLOW" "Current mounts:"
+
+    while IFS='|' read -r mount_type mount_source mount_destination mount_rw; do
+        [ -z "$mount_destination" ] && continue
+
+        case "$mount_rw" in
+            false|False|FALSE)
+                mount_access="read-only"
+                ;;
+            *)
+                mount_access="read-write"
+                ;;
+        esac
+
+        msg "$YELLOW" "  - $mount_destination <- $mount_source ($mount_type, $mount_access)"
+    done << EOF
+$mount_data
+EOF
+}
+
 # Read a prompt from the controlling tty when available.
 # Falls back to the supplied default when no tty exists.
 prompt_tty() {
@@ -102,6 +129,7 @@ prompt_tty() {
 # Detect whether to update, fresh install, exit, or continue as a clean install
 get_install_mode() {
     local existing_container_status
+    local existing_mounts
 
     existing_container_status="$(docker inspect s3pia --format '{{.State.Status}}' 2>/dev/null || true)"
     if [ -z "$existing_container_status" ]; then
@@ -110,8 +138,10 @@ get_install_mode() {
     fi
 
     step "Detected an existing S3pia container" >&2
+    existing_mounts="$(get_existing_container_mounts)"
+    print_mount_summary "$existing_mounts" >&2
     msg "$YELLOW" "Choose how to proceed:" >&2
-    msg "$YELLOW" "  1) Update existing install" >&2
+    msg "$YELLOW" "  1) Preserve existing install" >&2
     msg "$YELLOW" "  2) Fresh install" >&2
     msg "$YELLOW" "  3) Exit" >&2
 
@@ -119,8 +149,9 @@ get_install_mode() {
     choice="$(prompt_tty "Select an option [1-3]: " "3")"
 
     case "$choice" in
-        1|u|U|update|UPDATE)
-            echo "update"
+        1|p|P|preserve|PRESERVE)
+            EXISTING_CONTAINER_MOUNTS="$existing_mounts"
+            echo "preserve"
             ;;
         2|f|F|fresh|FRESH)
             echo "fresh"
@@ -138,9 +169,12 @@ get_install_mode() {
 write_workspace_override() {
     local workspace_path="$1"
     local mount_data="${2:-$(get_existing_container_mounts)}"
+    local preserve_mounts="${3:-false}"
 
-    if [[ "$workspace_path" == *\'* || "$workspace_path" == *:* || "$workspace_path" == *$'\n'* || "$workspace_path" == *$'\r'* ]]; then
-        error "Workspace path cannot contain quotes, colons, or newlines."
+    if [ "$preserve_mounts" != "true" ]; then
+        if [[ "$workspace_path" == *\'* || "$workspace_path" == *:* || "$workspace_path" == *$'\n'* || "$workspace_path" == *$'\r'* ]]; then
+            error "Workspace path cannot contain quotes, colons, or newlines."
+        fi
     fi
 
     if [ -z "$mount_data" ]; then
@@ -161,7 +195,7 @@ write_workspace_override() {
         while IFS='|' read -r mount_type mount_source mount_destination mount_rw; do
             [ -z "$mount_destination" ] && continue
 
-            if [ "$mount_destination" = "/app/ws" ]; then
+            if [ "$preserve_mounts" != "true" ] && [ "$mount_destination" = "/app/ws" ]; then
                 mount_type="bind"
                 mount_source="$workspace_path"
             fi
@@ -291,23 +325,8 @@ msg "$YELLOW" "A bind mount lets you access workspace files directly from your h
 echo ""
 
 BIND_MOUNT_PATH=""
-CURRENT_WORKSPACE_PATH="$(get_current_workspace_mount)"
-
-if [ "$INSTALL_MODE" = "update" ] && [ -n "$CURRENT_WORKSPACE_PATH" ]; then
-    msg "$YELLOW" "Detected existing S3pia container workspace mount: $CURRENT_WORKSPACE_PATH"
-    REPLY="$(prompt_tty "Reuse current workspace mount $CURRENT_WORKSPACE_PATH? [y/N] " "N")"
-
-    case "$REPLY" in
-        [Yy]|[Yy][Ee][Ss])
-            BIND_MOUNT_PATH="$CURRENT_WORKSPACE_PATH"
-            ;;
-        *)
-            ;;
-    esac
-fi
-
-if [ -n "$BIND_MOUNT_PATH" ]; then
-    write_workspace_override "$BIND_MOUNT_PATH"
+if [ "$INSTALL_MODE" = "preserve" ]; then
+    write_workspace_override "" "${EXISTING_CONTAINER_MOUNTS:-$(get_existing_container_mounts)}" true
 else
     REPLY="$(prompt_tty "Bind workspace to a host directory? [y/N] " "N")"
 
