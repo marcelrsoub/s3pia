@@ -97,10 +97,10 @@ docker-compose up -d
 
 ## Updating
 
+If you installed with `install.sh`, rerun the same command to update. The installer detects the existing container and reuses the current `/app/ws` bind mount, so your data volume bindings stay in place.
+
 ```bash
-cd ~/s3pia
-git pull
-docker-compose up -d --build
+curl -fsSL https://raw.githubusercontent.com/marcelrsoub/s3pia/main/install.sh | bash
 ```
 
 **Note:** Your data is stored in a Docker volume and persists across container updates.

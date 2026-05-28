@@ -26,6 +26,16 @@ One command. The installer checks Docker, clones the repo, and starts a single c
 
 Then open **http://localhost:3210** to check Telegram status and edit your `.env` settings.
 
+## Updating
+
+Run the same installer command again when you want to update:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/marcelrsoub/s3pia/main/install.sh | bash
+```
+
+If S3pia is already installed, the installer detects the running container and offers an update path that keeps your existing `/app/ws` bind mount and any other volume bindings intact.
+
 ## Requirements
 
 - [Docker](https://docs.docker.com/get-docker/)
