@@ -1,4 +1,5 @@
 import { getGateway } from "./gateway/manager.js";
+import { servePublicPage } from "./public-pages.js";
 import {
 	handleAIStatus,
 	handleChat,
@@ -110,6 +111,17 @@ export function startServer() {
 		websocket: wsHandler,
 		async fetch(req, server) {
 			const url = new URL(req.url);
+
+			// Serve agent-generated public pages before frontend static files.
+			if (
+				req.method === "GET" &&
+				(url.pathname === "/pages" || url.pathname.startsWith("/pages/"))
+			) {
+				const publicPageResponse = await servePublicPage(url.pathname);
+				if (publicPageResponse) {
+					return publicPageResponse;
+				}
+			}
 
 			// Serve frontend static files (try any GET request first)
 			if (req.method === "GET") {
