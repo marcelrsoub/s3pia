@@ -9,8 +9,9 @@
 
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { workspacePath } from "./workspace.js";
 
-const SKILLS_DIR = "/app/ws/skills";
+const SKILLS_DIR = workspacePath("skills");
 
 export interface Skill {
 	name: string;

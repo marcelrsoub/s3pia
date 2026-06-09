@@ -1,9 +1,6 @@
-// Workspace context loader for agent
+import { workspacePath } from "./workspace.js";
 
-import { getGateway } from "./gateway/manager.js";
-
-// Docker-only deployment: all user data lives in /app/ws (volume mount)
-const WORKSPACE = "/app/ws";
+const WORKSPACE = workspacePath();
 
 /**
  * Clear the cached workspace context.
@@ -56,27 +53,9 @@ export async function loadWorkspaceContext(): Promise<string> {
 		}
 	}
 
-	// Build dynamic system status
-	const gateway = getGateway();
-	const status = gateway.getStatus();
-	const availableChannels = Object.entries(status)
-		.filter(([, s]) => s.enabled && s.running)
-		.map(([name]) => name);
-
-	if (availableChannels.length > 0) {
-		const channelList = availableChannels.join(", ");
-		const channelGuidance =
-			availableChannels.includes("telegram") &&
-			availableChannels.includes("web")
-				? 'Use send_message with channel: "web", "telegram", or "both"'
-				: availableChannels.includes("telegram")
-					? 'Use send_message with channel: "telegram"'
-					: 'Use send_message with channel: "web"';
-
-		contextParts.push(
-			`## SYSTEM STATUS\n\nAvailable channels: ${channelList}\n${channelGuidance}`,
-		);
-	}
+	contextParts.push(
+		"## SYSTEM STATUS\n\nTelegram is the only user-facing channel. Use `send_message` to reply to the configured admin chat.",
+	);
 
 	const result = contextParts.join("\n\n");
 	cachedWorkspaceContext = result;

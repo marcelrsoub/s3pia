@@ -6,15 +6,22 @@
  * Used by the agent for native function calling.
  */
 
+import { resolve } from "node:path";
 import { tool } from "ai";
 import { z } from "zod";
 import { getApiKey } from "./api-keys.js";
-import { getSourceChannel } from "./context.js";
 import { conversationStore } from "./conversation.js";
 import { deleteEnvVar, getEnvSummary, getEnvVar, setEnvVar } from "./env.js";
-import { getGateway } from "./gateway/manager.js";
+import { clearWorkspaceContextCache } from "./prompts.js";
+import { getSkills } from "./skills.js";
+import {
+	buildWorkspaceAttachment,
+	normalizeWorkspaceFilePath,
+	sendTelegramMessageToAdmin,
+} from "./telegram-client.js";
+import { workspacePath } from "./workspace.js";
 
-const WORKSPACE = "/app/ws";
+const WORKSPACE = workspacePath();
 
 // Tool definitions using AI SDK's tool() function
 export const aiTools = {
@@ -79,17 +86,20 @@ export const aiTools = {
 			console.log(`[read_file] Reading: ${path}`);
 			const MAX_CONTENT = 20000; // characters
 			try {
-				const file = Bun.file(path);
+				const normalizedPath = normalizeWorkspaceFilePath(path);
+				if (!normalizedPath) {
+					return `Error: Access denied outside workspace: ${path}`;
+				}
+
+				const file = Bun.file(normalizedPath);
 				const exists = await file.exists();
 				if (!exists) {
-					return `Error: File not found: ${path}`;
+					return `Error: File not found: ${normalizedPath}`;
 				}
 				const text = await file.text();
 				if (text.length > MAX_CONTENT) {
 					console.log(`[read_file] Truncated ${text.length} to ${MAX_CONTENT}`);
-					return (
-						text.slice(0, MAX_CONTENT) + "\n\n[File truncated due to size]"
-					);
+					return `${text.slice(0, MAX_CONTENT)}\n\n[File truncated due to size]`;
 				}
 				return text;
 			} catch (err) {
@@ -107,8 +117,30 @@ export const aiTools = {
 		execute: async ({ path, content }) => {
 			console.log(`[write_file] Writing: ${path}`);
 			try {
-				await Bun.write(path, content);
-				return `Successfully wrote ${content.length} bytes to ${path}`;
+				const normalizedPath = normalizeWorkspaceFilePath(path);
+				if (!normalizedPath) {
+					return `Error: Access denied outside workspace: ${path}`;
+				}
+
+				await Bun.$`mkdir -p ${resolve(normalizedPath, "..")}`;
+				await Bun.write(normalizedPath, content);
+
+				if (normalizedPath.endsWith(".md")) {
+					if (
+						normalizedPath.endsWith("/IDENTITY.md") ||
+						normalizedPath.endsWith("/SOUL.md") ||
+						normalizedPath.endsWith("/USER.md") ||
+						normalizedPath.endsWith("/BOOTSTRAP.md")
+					) {
+						clearWorkspaceContextCache();
+					}
+
+					if (normalizedPath.includes("/skills/")) {
+						getSkills().clearCache();
+					}
+				}
+
+				return `Successfully wrote ${content.length} bytes to ${normalizedPath}`;
 			} catch (err) {
 				return `Error: ${err instanceof Error ? err.message : "Unknown error"}`;
 			}
@@ -126,10 +158,15 @@ export const aiTools = {
 		execute: async ({ path, old_string, new_string }) => {
 			console.log(`[edit_file] Editing: ${path}`);
 			try {
-				const file = Bun.file(path);
+				const normalizedPath = normalizeWorkspaceFilePath(path);
+				if (!normalizedPath) {
+					return `Error: Access denied outside workspace: ${path}`;
+				}
+
+				const file = Bun.file(normalizedPath);
 				const exists = await file.exists();
 				if (!exists) {
-					return `Error: File not found: ${path}`;
+					return `Error: File not found: ${normalizedPath}`;
 				}
 
 				const content = await file.text();
@@ -138,8 +175,22 @@ export const aiTools = {
 				}
 
 				const newContent = content.replace(old_string, new_string);
-				await Bun.write(path, newContent);
-				return `Successfully edited ${path}`;
+				await Bun.write(normalizedPath, newContent);
+
+				if (
+					normalizedPath.endsWith("/IDENTITY.md") ||
+					normalizedPath.endsWith("/SOUL.md") ||
+					normalizedPath.endsWith("/USER.md") ||
+					normalizedPath.endsWith("/BOOTSTRAP.md")
+				) {
+					clearWorkspaceContextCache();
+				}
+
+				if (normalizedPath.includes("/skills/")) {
+					getSkills().clearCache();
+				}
+
+				return `Successfully edited ${normalizedPath}`;
 			} catch (err) {
 				return `Error: ${err instanceof Error ? err.message : "Unknown error"}`;
 			}
@@ -151,10 +202,15 @@ export const aiTools = {
 		inputSchema: z.object({
 			path: z.string().optional().describe("Directory path (default: /app/ws)"),
 		}),
-		execute: async ({ path = "/app/ws" }) => {
+		execute: async ({ path = WORKSPACE }) => {
 			console.log(`[list_dir] Listing: ${path}`);
 			try {
-				const result = await Bun.$`ls -F ${path}`;
+				const normalizedPath = normalizeWorkspaceFilePath(path);
+				if (!normalizedPath) {
+					return `Error: Access denied outside workspace: ${path}`;
+				}
+
+				const result = await Bun.$`ls -F ${normalizedPath}`;
 				return result.stdout.toString().trim();
 			} catch (err) {
 				return `Error: ${err instanceof Error ? err.message : "Unknown error"}`;
@@ -197,8 +253,7 @@ export const aiTools = {
 
 				if (output.length > MAX_OUTPUT) {
 					console.log(`[exec] Truncated ${output.length} to ${MAX_OUTPUT}`);
-					output =
-						output.slice(0, MAX_OUTPUT) + "\n\n[Output truncated due to size]";
+					output = `${output.slice(0, MAX_OUTPUT)}\n\n[Output truncated due to size]`;
 				}
 				return output;
 			} catch (err) {
@@ -256,9 +311,7 @@ export const aiTools = {
 
 				if (text.length > MAX_CONTENT) {
 					console.log(`[web_fetch] Truncated ${text.length} to ${MAX_CONTENT}`);
-					return (
-						text.slice(0, MAX_CONTENT) + "\n\n[Content truncated due to size]"
-					);
+					return `${text.slice(0, MAX_CONTENT)}\n\n[Content truncated due to size]`;
 				}
 				return text;
 			} catch (err) {
@@ -309,15 +362,24 @@ export const aiTools = {
 		},
 	}),
 
+	ask_user: tool({
+		description:
+			"Pause the task and ask the Telegram admin one clear question when required information is missing.",
+		inputSchema: z.object({
+			question: z.string().min(1).describe("The question the user must answer"),
+		}),
+		execute: async ({ question }) => ({
+			success: true,
+			blocked: true,
+			question,
+		}),
+	}),
+
 	send_message: tool({
 		description:
-			"Send a message to the user via web interface and/or Telegram. To show images or files to the user, you MUST use the 'files' parameter - mentioning files in the message text will NOT render them. Images (png, jpg, gif, webp, svg) will be displayed inline, other files get download buttons.",
+			"Send a message to the Telegram admin. To show images or files to the user, you MUST use the 'files' parameter - mentioning files in the message text will NOT render them. Images (png, jpg, gif, webp, svg) will be displayed inline, other files get download buttons.",
 		inputSchema: z.object({
 			message: z.string().describe("The message to send"),
-			channel: z
-				.enum(["web", "telegram", "both"])
-				.optional()
-				.describe("Channel to use (default: web)"),
 			files: z
 				.array(z.string())
 				.optional()
@@ -325,34 +387,24 @@ export const aiTools = {
 					"Array of workspace file paths to attach. IMPORTANT: Must be an array like ['path/to/file.pdf'], not a string.",
 				),
 		}),
-		execute: async ({ message, channel, files }) => {
-			const targetChannel = channel || getSourceChannel();
+		execute: async ({ message, files }) => {
 			console.log(
-				`[send_message] Sent to ${targetChannel}: ${(message || "").slice(0, 100)}...${files ? ` (files: ${JSON.stringify(files)})` : ""}`,
+				`[send_message] Telegram: ${(message || "").slice(0, 100)}...${files ? ` (files: ${JSON.stringify(files)})` : ""}`,
 			);
 
-			// Validate required message parameter
 			if (!message) {
-				return "Error: message parameter is required";
+				return {
+					success: false,
+					messageDelivered: false,
+					error: "message parameter is required",
+				};
 			}
-			try {
-				const gateway = getGateway();
-				const results: string[] = [];
-				const attachedFiles: Array<{
-					filename: string;
-					path: string;
-					size?: number;
-					downloadUrl: string;
-				}> = [];
-				const warnings: string[] = [];
 
-				// Process file attachments
-				// Safety check: ensure files is an array (LLM might pass string or JSON string)
+			try {
 				let fileList: string[] = [];
 				if (Array.isArray(files)) {
 					fileList = files.filter((f): f is string => typeof f === "string");
 				} else if (typeof files === "string") {
-					// Try to parse as JSON array first (LLM might pass '["file.txt"]' as string)
 					try {
 						const parsed = JSON.parse(files);
 						if (Array.isArray(parsed)) {
@@ -363,117 +415,55 @@ export const aiTools = {
 							fileList = [parsed];
 						}
 					} catch {
-						// Not valid JSON, treat as single file path
 						fileList = [files];
 					}
 				}
 
-				if (fileList.length > 0) {
-					for (const filePath of fileList) {
-						try {
-							const file = Bun.file(filePath);
-							const exists = await file.exists();
+				const attachments = fileList
+					.map((filePath) => buildWorkspaceAttachment(filePath))
+					.filter((attachment): attachment is NonNullable<typeof attachment> =>
+						Boolean(attachment),
+					);
 
-							if (!exists) {
-								warnings.push(`File not found: ${filePath}`);
-								continue;
-							}
-
-							// Get relative path for URL (strip /app/ws/ prefix if present)
-							const relativePath = filePath
-								.replace("/app/ws/", "")
-								.replace("/app/ws", "");
-							attachedFiles.push({
-								filename: filePath.split("/").pop() || filePath,
-								path: filePath,
-								size: file.size,
-								downloadUrl: `/files/${relativePath}`,
-							});
-						} catch (err) {
-							const errorMsg =
-								err instanceof Error ? err.message : "Unknown error";
-							warnings.push(`Access denied: ${filePath} (${errorMsg})`);
-						}
+				const warnings: string[] = [];
+				for (const filePath of fileList) {
+					if (!buildWorkspaceAttachment(filePath)) {
+						warnings.push(`Access denied or missing file: ${filePath}`);
 					}
 				}
 
-				// Send to web channel
-				if (targetChannel === "web" || targetChannel === "both") {
-					const webChannel = gateway.getWebChannel();
-					if (webChannel) {
-						// Send file attachments first if any
-						if (attachedFiles.length > 0) {
-							console.log(
-								`[send_message] Broadcasting ${attachedFiles.length} files to web`,
-							);
-							webChannel.broadcast("default", {
-								type: "file",
-								files: attachedFiles,
-							});
-							// Small delay to ensure file message is processed before content
-							await new Promise((resolve) => setTimeout(resolve, 50));
-						}
-						// Send the message content
-						webChannel.broadcast("default", {
-							type: "content",
-							content: message,
-							done: true,
-						});
-						conversationStore.addMessage(
-							"default",
-							"assistant",
-							message,
-							"web",
-							undefined,
-							undefined,
-							attachedFiles.length > 0 ? attachedFiles : undefined,
-						);
-						results.push("web");
-					}
+				const result = await sendTelegramMessageToAdmin(
+					message,
+					attachments.map((file) => file.path),
+				);
+
+				if (result.messageDelivered) {
+					conversationStore.addMessage(
+						"telegram",
+						"assistant",
+						message,
+						"telegram",
+						undefined,
+						undefined,
+						attachments.length > 0 ? attachments : undefined,
+					);
 				}
 
-				// Send to telegram channel
-				if (targetChannel === "telegram" || targetChannel === "both") {
-					const telegramChannel = gateway.getTelegramChannel();
-					if (telegramChannel) {
-						// Append file markers for Telegram (it handles these internally)
-						let telegramMessage = message;
-						for (const file of attachedFiles) {
-							telegramMessage += `\n[FILE: ${file.path}]`;
-						}
-						await telegramChannel.broadcast(telegramMessage);
-						conversationStore.addMessage(
-							"default",
-							"assistant",
-							message,
-							undefined,
-							undefined,
-							undefined,
-							attachedFiles.length > 0 ? attachedFiles : undefined,
-						);
-						results.push("telegram");
-					}
-				}
-
-				// Build result message
-				if (results.length === 0) {
-					let errorMsg = `Error: No channels available for '${channel}'`;
-					if (warnings.length > 0) {
-						errorMsg += `\nWarnings: ${warnings.join(", ")}`;
-					}
-					return errorMsg;
-				}
-
-				let resultMsg = `Message sent to: ${results.join(", ")}`;
-				if (attachedFiles.length > 0) {
-					resultMsg += `\nFiles attached: ${attachedFiles.map((f) => f.filename).join(", ")}`;
-				}
-				if (warnings.length > 0) {
-					resultMsg += `\nWarnings: ${warnings.join(", ")}`;
-				}
-				return resultMsg;
+				return {
+					success: result.ok,
+					messageDelivered: result.messageDelivered,
+					filesAttached: result.attachments.map((file) => file.filename),
+					warnings: [...warnings, ...result.warnings],
+					...(result.messageDelivered
+						? {}
+						: { error: "Failed to send Telegram message" }),
+				};
 			} catch (err) {
-				return `Error: ${err instanceof Error ? err.message : "Unknown error"}`;
+				return {
+					success: false,
+					messageDelivered: false,
+					error: err instanceof Error ? err.message : "Unknown error",
+				};
 			}
 		},
 	}),
@@ -513,8 +503,9 @@ export const aiTools = {
 				const exitCode = await proc.exited;
 
 				// Strip ANSI color codes for cleaner output
-				stdout = stdout.replace(/\x1b\[[0-9;]*m/g, "");
-				stderr = stderr.replace(/\x1b\[[0-9;]*m/g, "");
+				const ansiPattern = new RegExp(["\\x1b", "\\[[0-9;]*m"].join(""), "g");
+				stdout = stdout.replace(ansiPattern, "");
+				stderr = stderr.replace(ansiPattern, "");
 
 				let output =
 					exitCode !== 0
@@ -523,7 +514,7 @@ export const aiTools = {
 
 				if (output.length > MAX_OUTPUT) {
 					console.log(`[browser] Truncated ${output.length} to ${MAX_OUTPUT}`);
-					output = output.slice(0, MAX_OUTPUT) + "\n\n[Output truncated]";
+					output = `${output.slice(0, MAX_OUTPUT)}\n\n[Output truncated]`;
 				}
 				return output;
 			} catch (err) {

@@ -3,9 +3,10 @@ services:
     build: .
     container_name: s3pia
     ports:
-      - "3210:3210"
+      - "127.0.0.1:3210:3210"
     environment:
       - PORT=3210
+      - HOST=0.0.0.0
     volumes:
       - s3pia-workspace:/app/ws
     restart: unless-stopped

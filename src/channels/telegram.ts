@@ -1,32 +1,25 @@
 /**
  * Telegram Channel
  *
- * Telegram bot implementation extending BaseChannel.
- * Handles message polling, command processing, and file downloads.
- *
- * Inspired by nanobot: https://github.com/HKUDS/nanobot
+ * Single-user Telegram transport for S3pia.
+ * This channel only talks to the configured admin chat.
  */
 
-import { Agent } from "../agent.js";
-import { conversationStore } from "../conversation.js";
-import { getEnvVar } from "../env.js";
 import {
-	BaseChannel,
-	type ChannelConfig,
-	type InboundMessage,
-	type OutboundMessage,
-} from "./base.js";
+	conversationStore,
+	TELEGRAM_CONVERSATION_ID,
+} from "../conversation.js";
+import { getEnvVar } from "../env.js";
+import { getTaskQueue } from "../task-queue.js";
+import { sendTelegramMessageToAdmin } from "../telegram-client.js";
+import { workspacePath } from "../workspace.js";
 
-/**
- * Telegram channel configuration
- */
-export interface TelegramChannelConfig extends ChannelConfig {
+export interface TelegramChannelConfig {
+	enabled: boolean;
+	allowFrom: string[];
 	token: string;
 }
 
-/**
- * Telegram update from webhook/polling
- */
 interface TelegramUpdate {
 	update_id: number;
 	message?: {
@@ -40,152 +33,74 @@ interface TelegramUpdate {
 		video?: { file_id: string; file_name?: string };
 		audio?: { file_id: string; file_name?: string };
 		voice?: { file_id: string };
-		sticker?: { file_id: string };
-		animation?: { file_id: string; file_name?: string };
 	};
 }
 
-/**
- * Convert Markdown to Telegram MarkdownV2 format
- *
- * Telegram MarkdownV2 requires escaping special chars, but we want to
- * preserve valid formatting. Strategy:
- * 1. Identify and protect valid Markdown patterns with placeholders
- * 2. Escape remaining special characters
- * 3. Restore placeholders in valid MarkdownV2 format
- */
-function convertToTelegramMarkdown(text: string): string {
-	const SPECIAL_CHARS = /[_*[\]()~`>#+\-=|{}.!]/;
-	const ALL_SPECIAL = /[_*[\]()~`>#+\-=|{}.!]/g;
-
-	interface ProtectedPart {
-		placeholder: string;
-		replacement: string;
-	}
-	const protectedParts: ProtectedPart[] = [];
-	let placeholderIndex = 0;
-
-	const protect = (replacement: string): string => {
-		const placeholder = `\x00PH${placeholderIndex++}\x00`;
-		protectedParts.push({ placeholder, replacement });
-		return placeholder;
-	};
-
-	let result = text;
-
-	// Protect code blocks first (``` ... ```)
-	result = result.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-		const escapedCode = code.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
-		return protect(`\`\`\`${lang}\n${escapedCode}\`\`\``);
-	});
-
-	// Protect inline code (` ... `)
-	result = result.replace(/`([^`\n]+)`/g, (_, code) => {
-		const escaped = code.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
-		return protect(`\`${escaped}\``);
-	});
-
-	// Protect links [text](url)
-	result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, linkText, url) => {
-		const escapedText = linkText.replace(ALL_SPECIAL, "\\$&");
-		const escapedUrl = url.replace(/[)]/g, "\\$&");
-		return protect(`[${escapedText}](${escapedUrl})`);
-	});
-
-	// Protect bold (**text** or __text__)
-	result = result.replace(/\*\*([^*]+)\*\*/g, (_, content) => {
-		const escaped = content.replace(ALL_SPECIAL, "\\$&");
-		return protect(`*${escaped}*`);
-	});
-	result = result.replace(/__([^_]+)__/g, (_, content) => {
-		const escaped = content.replace(ALL_SPECIAL, "\\$&");
-		return protect(`__${escaped}__`);
-	});
-
-	// Protect italic (*text* or _text_) - must come after bold
-	result = result.replace(/\*([^*\n]+)\*/g, (_, content) => {
-		const escaped = content.replace(ALL_SPECIAL, "\\$&");
-		return protect(`_${escaped}_`);
-	});
-	result = result.replace(/_([^_\n]+)_/g, (_, content) => {
-		const escaped = content.replace(ALL_SPECIAL, "\\$&");
-		return protect(`_${escaped}_`);
-	});
-
-	// Protect blockquotes (> text at line start)
-	result = result.replace(/^(>+\s*)(.*)$/gm, (_, prefix, content) => {
-		const escaped = content.replace(ALL_SPECIAL, "\\$&");
-		return protect(`${prefix}${escaped}`);
-	});
-
-	// Escape all remaining special characters
-	result = result.replace(ALL_SPECIAL, "\\$&");
-
-	// Restore protected parts
-	for (const { placeholder, replacement } of protectedParts) {
-		result = result.replace(placeholder, replacement);
-	}
-
-	return result;
+function sanitizeTelegramFilename(filename: string): string {
+	const base = filename
+		.split("/")
+		.pop()
+		?.replace(/[^a-zA-Z0-9._-]+/g, "_")
+		.replace(/^_+|_+$/g, "");
+	return base || "file";
 }
 
-/**
- * Telegram Bot Channel
- */
-export class TelegramChannel extends BaseChannel {
+function getValidAdminId(): string | null {
+	const value = getEnvVar("ADMIN_TELEGRAM_ID");
+	return value && /^[1-9]\d*$/.test(value) ? value : null;
+}
+
+export class TelegramChannel {
 	private token: string;
+	private botIdentity: string;
+	private started = false;
 	private pollTimer: ReturnType<typeof setInterval> | null = null;
 	private lastUpdateId = 0;
-	private isPolling = false; // Prevent concurrent polls
-	private readonly PORT = process.env.PORT || "3000";
+	private isPolling = false;
 
 	constructor(config: TelegramChannelConfig) {
-		super(config);
 		this.token = config.token;
+		this.botIdentity = config.token.split(":")[0] || "unknown";
 	}
 
-	/**
-	 * Get channel name
-	 */
 	getName(): string {
 		return "telegram";
 	}
 
-	/**
-	 * Start Telegram bot (begin polling)
-	 */
-	async start(): Promise<void> {
-		if (this.started) {
-			console.log("[Telegram] Already started");
-			return;
-		}
+	getStatus(): { name: string; enabled: boolean; running: boolean } {
+		return {
+			name: this.getName(),
+			enabled: true,
+			running: this.started,
+		};
+	}
 
+	isRunning(): boolean {
+		return this.started;
+	}
+
+	async start(): Promise<void> {
+		if (this.started) return;
 		if (!this.token) {
 			console.warn("[Telegram] No token configured");
 			return;
 		}
 
-		console.log("[Telegram] Starting bot...");
-
-		// Ensure telegram conversation exists
-		if (!conversationStore.get("telegram")) {
-			conversationStore.create("telegram");
+		if (!conversationStore.get(TELEGRAM_CONVERSATION_ID)) {
+			conversationStore.create(TELEGRAM_CONVERSATION_ID);
 		}
 
-		// Register callback for sending messages
-		conversationStore.registerTelegramCallback(async (content: string) => {
-			await this.broadcastToAuthorized(content);
-		});
-
-		// Start polling
-		this.startPolling();
 		this.started = true;
+		this.pollTimer = setInterval(() => {
+			this.pollUpdates().catch((err) => {
+				console.error("[Telegram] Poll error:", err);
+			});
+		}, 11_000);
+
+		await this.pollUpdates();
 		console.log("[Telegram] Bot started");
 	}
 
-	/**
-	 * Stop Telegram bot
-	 */
 	async stop(): Promise<void> {
 		if (this.pollTimer) {
 			clearInterval(this.pollTimer);
@@ -195,56 +110,59 @@ export class TelegramChannel extends BaseChannel {
 		console.log("[Telegram] Bot stopped");
 	}
 
-	/**
-	 * Send message to a user
-	 */
-	async send(message: OutboundMessage): Promise<void> {
-		const chatId = Number.parseInt(message.recipientId, 10);
-		if (Number.isNaN(chatId)) {
-			console.error("[Telegram] Invalid chat ID:", message.recipientId);
+	async restart(): Promise<void> {
+		await this.stop();
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		await this.start();
+	}
+
+	async send(message: {
+		recipientId: string;
+		content: string;
+		metadata?: Record<string, unknown>;
+	}): Promise<void> {
+		const adminId = getValidAdminId();
+		if (!adminId || message.recipientId !== adminId) {
+			console.warn("[Telegram] Refusing to send to non-admin recipient");
 			return;
 		}
 
-		await this.sendMessageToChat(chatId, message.content);
+		await sendTelegramMessageToAdmin(message.content);
 	}
 
-	/**
-	 * Start polling for updates
-	 */
-	private startPolling(): void {
-		this.pollTimer = setInterval(() => {
-			this.pollUpdates().catch((err) => {
-				console.error("[Telegram] Poll error:", err);
-			});
-		}, 11000); // Poll every 11 seconds
+	async broadcast(content: string): Promise<void> {
+		await this.sendMessageToAdmin(content);
 	}
 
-	/**
-	 * Poll for updates from Telegram
-	 */
+	private async sendMessageToAdmin(
+		text: string,
+		files: string[] = [],
+	): Promise<void> {
+		await sendTelegramMessageToAdmin(text, files);
+	}
+
 	private async pollUpdates(): Promise<void> {
-		// Prevent concurrent polling - skip if already in progress
-		if (this.isPolling) {
-			console.log("[Telegram] Poll already in progress, skipping");
-			return;
-		}
-
+		if (this.isPolling) return;
 		this.isPolling = true;
+
 		try {
 			const url = `https://api.telegram.org/bot${this.token}/getUpdates?offset=${this.lastUpdateId + 1}&timeout=10`;
 			const response = await fetch(url);
-			const data = await response.json();
+			const data = (await response.json()) as {
+				ok: boolean;
+				description?: string;
+				result?: TelegramUpdate[];
+			};
 
 			if (!data.ok) {
 				console.error("[Telegram] API error:", data.description);
 				return;
 			}
 
-			const updates: TelegramUpdate[] = data.result || [];
+			const updates = data.result || [];
 			for (const update of updates) {
-				// Update offset BEFORE processing to prevent re-processing
-				this.lastUpdateId = update.update_id;
 				await this.processUpdate(update);
+				this.lastUpdateId = update.update_id;
 			}
 		} catch (err) {
 			console.error("[Telegram] Poll error:", err);
@@ -253,115 +171,103 @@ export class TelegramChannel extends BaseChannel {
 		}
 	}
 
-	/**
-	 * Process a single update
-	 */
 	private async processUpdate(update: TelegramUpdate): Promise<void> {
-		if (!update.message) return;
+		const message = update.message;
+		if (!message) return;
 
-		const { chat, from, text, caption } = update.message;
-		const messageText = text || caption || "";
-		console.log(
-			`[Telegram] [${from?.first_name || "Unknown"}] ${messageText || "[media]"}`,
-		);
-
-		// Check authorization
-		const senderId = from?.id?.toString() || chat.id.toString();
-		if (!this.isAllowed(senderId)) {
-			await this.sendRawMessage(
-				chat.id,
-				"🔒 You are not authorized to use this bot.",
-			);
+		const senderId = message.from?.id?.toString() || message.chat.id.toString();
+		const adminId = getValidAdminId();
+		if (!adminId || senderId !== adminId) {
+			console.warn(`[Telegram] Rejected unauthorized sender ${senderId}`);
 			return;
 		}
 
-		// Handle commands
-		if (text && text.startsWith("/")) {
-			await this.handleCommand(chat.id, senderId, text);
-			return;
+		const parts: string[] = [];
+		const text = message.text || message.caption || "";
+		if (text) {
+			parts.push(text);
 		}
 
-		// Handle regular message with files
-		let content = messageText;
 		const timestamp = Date.now();
-
-		// Handle file attachments
-		if (update.message.photo?.length) {
-			const lastPhoto = update.message.photo[update.message.photo.length - 1];
+		if (message.photo?.length) {
+			const lastPhoto = message.photo[message.photo.length - 1];
 			if (lastPhoto) {
-				const path = await this.downloadFile(
+				const savePath = await this.downloadFile(
 					lastPhoto.file_id,
 					`photo_${timestamp}.jpg`,
 				);
-				content += `\n[FILE: ${path}]`;
+				parts.push(`[FILE: ${savePath}]`);
 			}
-		} else if (update.message.document) {
-			const path = await this.downloadFile(
-				update.message.document.file_id,
-				update.message.document.file_name || `file_${timestamp}`,
+		} else if (message.document) {
+			const savePath = await this.downloadFile(
+				message.document.file_id,
+				message.document.file_name || `file_${timestamp}`,
 			);
-			content += `\n[FILE: ${path}]`;
-		} else if (update.message.video) {
-			const path = await this.downloadFile(
-				update.message.video.file_id,
-				update.message.video.file_name || `video_${timestamp}.mp4`,
+			parts.push(`[FILE: ${savePath}]`);
+		} else if (message.video) {
+			const savePath = await this.downloadFile(
+				message.video.file_id,
+				message.video.file_name || `video_${timestamp}.mp4`,
 			);
-			content += `\n[FILE: ${path}]`;
-		} else if (update.message.audio) {
-			const path = await this.downloadFile(
-				update.message.audio.file_id,
-				update.message.audio.file_name || `audio_${timestamp}.mp3`,
+			parts.push(`[FILE: ${savePath}]`);
+		} else if (message.audio) {
+			const savePath = await this.downloadFile(
+				message.audio.file_id,
+				message.audio.file_name || `audio_${timestamp}.mp3`,
 			);
-			content += `\n[FILE: ${path}]`;
-		} else if (update.message.voice) {
-			const path = await this.downloadFile(
-				update.message.voice.file_id,
+			parts.push(`[FILE: ${savePath}]`);
+		} else if (message.voice) {
+			const savePath = await this.downloadFile(
+				message.voice.file_id,
 				`voice_${timestamp}.ogg`,
 			);
-			content += `\n[FILE: ${path}]`;
+			parts.push(`[FILE: ${savePath}]`);
 		}
 
-		// Forward to agent via HTTP endpoint
-		// Show typing indicator while processing
-		await this.sendTypingAction(chat.id);
+		const content = parts.join("\n").trim();
+		if (message.text?.startsWith("/")) {
+			await this.handleCommand(message.chat.id, message.text);
+			return;
+		}
 
-		try {
-			const response = await fetch(`http://localhost:${this.PORT}/chat`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ message: content, source: "telegram" }),
-			});
+		const existingTask = getTaskQueue().getBySourceKey(
+			`telegram:${this.botIdentity}:${update.update_id}`,
+		);
+		if (existingTask) return;
 
-			if (!response.ok) {
-				await this.sendRawMessage(
-					chat.id,
-					"⚠️ Failed to process your message\\. Please try again\\.",
-				);
-			}
-		} catch (err) {
-			console.error("[Telegram] Error forwarding to agent:", err);
+		const conversation =
+			conversationStore.get(TELEGRAM_CONVERSATION_ID) ||
+			conversationStore.create(TELEGRAM_CONVERSATION_ID);
+		const history = [...conversation.messages];
+		conversationStore.addMessage(
+			TELEGRAM_CONVERSATION_ID,
+			"user",
+			content,
+			"telegram",
+		);
+
+		getTaskQueue().enqueue({
+			kind: "telegram",
+			sourceKey: `telegram:${this.botIdentity}:${update.update_id}`,
+			input: content,
+			history,
+		});
+
+		if (content.length > 160 || content.includes("[FILE:")) {
 			await this.sendRawMessage(
-				chat.id,
-				"⚠️ Something went wrong\\. Please try again later\\.",
+				message.chat.id,
+				"Queued. I will reply when it is complete.",
 			);
 		}
 	}
 
-	/**
-	 * Handle bot commands
-	 */
-	private async handleCommand(
-		chatId: number,
-		senderId: string,
-		text: string,
-	): Promise<void> {
-		const parts = text.trim().split(/\s+/);
-		const command = parts[0]?.toLowerCase() ?? "";
+	private async handleCommand(chatId: number, text: string): Promise<void> {
+		const command = text.trim().split(/\s+/)[0]?.toLowerCase() || "";
 
 		if (command === "/start") {
 			await this.sendRawMessage(
 				chatId,
-				"🤎 Welcome to SepiaBot!\n\nSend me a message and I'll help you out.",
+				"Welcome to S3pia. Send a message and I will handle it here.",
 			);
 			return;
 		}
@@ -369,224 +275,76 @@ export class TelegramChannel extends BaseChannel {
 		if (command === "/help") {
 			await this.sendRawMessage(
 				chatId,
-				"*Available Commands:*\n/start - Welcome message\n/help - Show this message",
+				"Available commands: /start, /help, /status",
 			);
 			return;
 		}
 
-		await this.sendRawMessage(
-			chatId,
-			"Unknown command. Use /help for available commands.",
-		);
+		if (command === "/status") {
+			const latest = getTaskQueue().getLatest();
+			await this.sendRawMessage(
+				chatId,
+				latest
+					? `Latest task: ${latest.status}${latest.error ? ` (${latest.error})` : ""}`
+					: "No tasks have been queued.",
+			);
+			return;
+		}
+
+		await this.sendRawMessage(chatId, "Unknown command. Use /help.");
 	}
 
-	/**
-	 * Send text message to chat
-	 */
-	private async sendMessageToChat(
-		chatId: number,
+	private async sendRawMessage(
+		_chatId: number,
 		text: string,
 	): Promise<boolean> {
 		try {
-			const url = `https://api.telegram.org/bot${this.token}/sendMessage`;
-			const response = await fetch(url, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					chat_id: chatId,
-					text: convertToTelegramMarkdown(text),
-					parse_mode: "MarkdownV2",
-				}),
-			});
-
-			const data = await response.json();
-			return data.ok;
+			const result = await sendTelegramMessageToAdmin(text);
+			return result.ok;
 		} catch (err) {
 			console.error("[Telegram] Error sending message:", err);
 			return false;
 		}
 	}
 
-	/**
-	 * Send raw message without escaping
-	 */
-	private async sendRawMessage(chatId: number, text: string): Promise<boolean> {
-		try {
-			const url = `https://api.telegram.org/bot${this.token}/sendMessage`;
-			const response = await fetch(url, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					chat_id: chatId,
-					text,
-					parse_mode: "MarkdownV2",
-				}),
-			});
-
-			const data = await response.json();
-			if (!data.ok) {
-				console.error("[Telegram] API error:", data.description);
-			}
-			return data.ok;
-		} catch (err) {
-			console.error("[Telegram] Error sending message:", err);
-			return false;
-		}
-	}
-
-	/**
-	 * Send typing action to show "typing..." indicator
-	 */
-	private async sendTypingAction(chatId: number): Promise<void> {
-		try {
-			const url = `https://api.telegram.org/bot${this.token}/sendChatAction`;
-			const response = await fetch(url, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					chat_id: chatId,
-					action: "typing",
-				}),
-			});
-			const data = (await response.json()) as {
-				ok: boolean;
-				description?: string;
-			};
-			if (!data.ok) {
-				console.error("[Telegram] Typing action failed:", data.description);
-			}
-		} catch (err) {
-			console.error("[Telegram] Error sending typing action:", err);
-		}
-	}
-
-	/**
-	 * Download file from Telegram
-	 */
 	private async downloadFile(
 		fileId: string,
 		filename: string,
 	): Promise<string> {
 		const fileInfoUrl = `https://api.telegram.org/bot${this.token}/getFile?file_id=${fileId}`;
-		const fileInfo = await fetch(fileInfoUrl).then((r) => r.json());
+		const fileInfo = (await fetch(fileInfoUrl).then((r) => r.json())) as {
+			ok: boolean;
+			description?: string;
+			result?: { file_path: string };
+		};
 
-		if (!fileInfo.ok) {
-			throw new Error(`Failed to get file info: ${fileInfo.description}`);
+		if (!fileInfo.ok || !fileInfo.result?.file_path) {
+			throw new Error(
+				`Failed to get file info: ${fileInfo.description || "unknown error"}`,
+			);
 		}
 
 		const fileUrl = `https://api.telegram.org/file/bot${this.token}/${fileInfo.result.file_path}`;
 		const response = await fetch(fileUrl);
+		if (!response.ok) {
+			throw new Error(
+				`Failed to download Telegram file: HTTP ${response.status}`,
+			);
+		}
 		const buffer = await response.arrayBuffer();
+		if (buffer.byteLength > 20 * 1024 * 1024) {
+			throw new Error("Telegram file exceeds the 20 MB workspace upload limit");
+		}
 
-		const fs = await import("node:fs");
-		const savePath = `/app/ws/files/${filename}`;
-		await fs.promises.mkdir("/app/ws/files", { recursive: true });
-		await fs.promises.writeFile(savePath, Buffer.from(buffer));
+		const safeName = sanitizeTelegramFilename(filename);
+		const savePath = workspacePath("files", `${Date.now()}_${safeName}`);
+		await Bun.$`mkdir -p ${workspacePath("files")}`;
+		await Bun.write(savePath, Buffer.from(buffer));
 
 		return savePath;
 	}
-
-	/**
-	 * Broadcast message to all authorized users
-	 */
-	private async broadcastToAuthorized(content: string): Promise<void> {
-		const allowedUsers = this.config.allowFrom;
-
-		const lines = content.split("\n");
-		const files: string[] = [];
-		const textLines: string[] = [];
-
-		for (const line of lines) {
-			const fileMatch = line.match(/\[FILE: (\/app\/ws\/[^\]]+)\]/);
-			if (fileMatch && fileMatch[1]) {
-				files.push(fileMatch[1]);
-			} else {
-				textLines.push(line);
-			}
-		}
-
-		const fullText = textLines.join("\n");
-
-		for (const userId of allowedUsers) {
-			const chatId = Number.parseInt(userId, 10);
-			if (Number.isNaN(chatId)) continue;
-
-			if (fullText.trim()) {
-				const CHUNK_SIZE = 4000;
-				for (let i = 0; i < fullText.length; i += CHUNK_SIZE) {
-					const chunk = fullText.slice(i, i + CHUNK_SIZE);
-					await this.sendMessageToChat(chatId, chunk);
-				}
-			}
-
-			for (const file of files) {
-				await this.sendFile(chatId, file);
-			}
-		}
-	}
-
-	/**
-	 * Send file to chat
-	 */
-	private async sendFile(chatId: number, path: string): Promise<boolean> {
-		const fs = await import("node:fs");
-		const ext = path.split(".").pop()?.toLowerCase() || "";
-
-		try {
-			const formData = new FormData();
-			formData.append("chat_id", chatId.toString());
-
-			let url = "";
-			let fieldName = "";
-			if (["png", "jpg", "jpeg", "gif", "webp"].includes(ext)) {
-				url = `https://api.telegram.org/bot${this.token}/sendPhoto`;
-				fieldName = "photo";
-			} else if (["mp4", "mov", "webm"].includes(ext)) {
-				url = `https://api.telegram.org/bot${this.token}/sendVideo`;
-				fieldName = "video";
-			} else {
-				url = `https://api.telegram.org/bot${this.token}/sendDocument`;
-				fieldName = "document";
-			}
-
-			formData.append(
-				fieldName,
-				new Blob([fs.readFileSync(path)]),
-				path.split("/").pop()!,
-			);
-
-			const response = await fetch(url, { method: "POST", body: formData });
-			const data = await response.json();
-			if (!data.ok) {
-				console.error(`[Telegram] sendFile failed:`, data.description);
-			}
-			return data.ok;
-		} catch (err) {
-			console.error("[Telegram] Error sending file:", err);
-			return false;
-		}
-	}
-
-	/**
-	 * Restart the bot (for token changes)
-	 */
-	async restart(): Promise<void> {
-		await this.stop();
-		await new Promise((resolve) => setTimeout(resolve, 100));
-		await this.start();
-	}
-
-	/**
-	 * Broadcast message to all authorized users (public interface for tools)
-	 */
-	async broadcast(content: string): Promise<void> {
-		await this.broadcastToAuthorized(content);
-	}
 }
 
-/**
- * Create Telegram channel from settings
- */
 export function createTelegramChannel(): TelegramChannel | null {
 	const token = getEnvVar("TELEGRAM_BOT_TOKEN");
 	if (!token) {
@@ -594,19 +352,23 @@ export function createTelegramChannel(): TelegramChannel | null {
 		return null;
 	}
 
-	// Check if Telegram is explicitly disabled
 	const telegramEnabled = getEnvVar("TELEGRAM_ENABLED");
 	if (telegramEnabled === "false" || telegramEnabled === "0") {
 		console.log("[Telegram] Telegram is disabled in settings, skipping");
 		return null;
 	}
 
-	const allowFromStr = getEnvVar("ADMIN_TELEGRAM_ID") || "";
-	const allowFrom = allowFromStr ? [allowFromStr] : [];
+	const adminTelegramId = getValidAdminId();
+	if (!adminTelegramId) {
+		console.warn(
+			"[Telegram] ADMIN_TELEGRAM_ID is missing or invalid; Telegram is disabled",
+		);
+		return null;
+	}
 
 	return new TelegramChannel({
 		enabled: true,
-		allowFrom,
+		allowFrom: [adminTelegramId],
 		token,
 	});
 }

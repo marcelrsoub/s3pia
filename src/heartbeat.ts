@@ -7,11 +7,11 @@
  * Check interval: 10 minutes (aligned to :00/:10/:20/:30/:40/:50)
  */
 
-import { Agent } from "./agent.js";
 import { clearWorkspaceContextCache } from "./prompts.js";
+import { getTaskQueue } from "./task-queue.js";
+import { workspacePath } from "./workspace.js";
 
-const WORKSPACE = "/app/ws";
-const TASKS_FILE = `${WORKSPACE}/tasks/scheduled.md`;
+const TASKS_FILE = workspacePath("tasks", "scheduled.md");
 const CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
@@ -41,10 +41,91 @@ export interface ScheduledTask {
 	lastRun?: string; // ISO timestamp
 }
 
+export function parseScheduledTasks(content: string): ScheduledTask[] {
+	const tasks: ScheduledTask[] = [];
+	const activeSectionMatch = content.match(/##\s*Active Tasks\n([\s\S]*)/);
+	if (!activeSectionMatch?.[1]) return tasks;
+
+	const parts = activeSectionMatch[1].split(/\n## /);
+	for (const part of parts) {
+		const lines = part.split("\n");
+		const name = lines[0]?.trim();
+		const body = lines.slice(1).join("\n").trim();
+		if (
+			!name ||
+			(!body.includes("Action:") &&
+				!body.includes("Every:") &&
+				!body.includes("RunAt:"))
+		) {
+			continue;
+		}
+
+		const task: ScheduledTask = { name, action: "" };
+		const fieldRegex =
+			/(?:^|\n)(Every|RunAt|LastRun|Action):\s*([\s\S]*?)(?=\n(?:Every|RunAt|LastRun|Action):|$)/g;
+		for (const fieldMatch of body.matchAll(fieldRegex)) {
+			const key = fieldMatch[1]?.toLowerCase();
+			const value = (fieldMatch[2] ?? "").trim();
+			switch (key) {
+				case "action":
+					task.action = value;
+					break;
+				case "every":
+					task.every = value;
+					break;
+				case "runat":
+					task.runAt = value;
+					break;
+				case "lastrun":
+					task.lastRun = value;
+					break;
+			}
+		}
+
+		if (task.action) tasks.push(task);
+	}
+
+	return tasks;
+}
+
+function escapeRegex(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function updateScheduledTasksContent(
+	content: string,
+	updates: ScheduledTask[],
+	toRemove: string[],
+): string {
+	for (const task of updates) {
+		const taskRegex = new RegExp(
+			`(^##\\s*${escapeRegex(task.name)}\\s*\\n)[\\s\\S]*?(?=^##\\s|(?![\\s\\S]))`,
+			"gm",
+		);
+		content = content.replace(taskRegex, (match) => {
+			if (!task.lastRun) return match;
+			if (match.includes("LastRun:")) {
+				return match.replace(/LastRun:\s*[^\n]+/, `LastRun: ${task.lastRun}`);
+			}
+			return `${match.trimEnd()}\nLastRun: ${task.lastRun}\n\n`;
+		});
+	}
+
+	for (const taskName of toRemove) {
+		const taskRegex = new RegExp(
+			`^##\\s*${escapeRegex(taskName)}\\s*\\n[\\s\\S]*?(?=^##\\s|(?![\\s\\S]))`,
+			"gm",
+		);
+		content = content.replace(taskRegex, "");
+	}
+
+	return content;
+}
+
 /**
  * Parse the "Every:" field and determine next run time
  */
-function parseEvery(every: string, lastRun: Date, now: Date): Date | null {
+function parseEvery(every: string, lastRun: Date): Date | null {
 	const everyLower = every.toLowerCase().trim();
 
 	// "X minutes" - every X minutes
@@ -187,27 +268,22 @@ export class HeartbeatScheduler {
 		console.log("[Heartbeat] Checking for due tasks...");
 		const tasks = await this.parseTasksFile();
 		const now = new Date();
-		const tasksToExecute: ScheduledTask[] = [];
 		const tasksToUpdate: ScheduledTask[] = [];
 		const tasksToRemove: string[] = [];
 
 		for (const task of tasks) {
 			if (this.isTaskDue(task, now)) {
-				tasksToExecute.push(task);
-
-				if (task.runAt) {
-					// One-time task - mark for removal
-					tasksToRemove.push(task.name);
-				} else {
-					// Recurring task - mark for LastRun update
-					tasksToUpdate.push({ ...task, lastRun: now.toISOString() });
+				const queuedTask = this.queueTask(task);
+				if (queuedTask.status === "completed") {
+					if (task.runAt) {
+						tasksToRemove.push(task.name);
+					} else {
+						tasksToUpdate.push({ ...task, lastRun: now.toISOString() });
+					}
+				} else if (queuedTask.status === "failed") {
+					getTaskQueue().retry(queuedTask.sourceKey);
 				}
 			}
-		}
-
-		// Execute tasks
-		for (const task of tasksToExecute) {
-			await this.executeTask(task);
 		}
 
 		// Update file if needed
@@ -230,7 +306,7 @@ export class HeartbeatScheduler {
 			}
 
 			const content = await file.text();
-			return this.parseTasks(content);
+			return parseScheduledTasks(content);
 		} catch (err) {
 			console.error("[Heartbeat] Parse error:", err);
 			return [];
@@ -240,72 +316,6 @@ export class HeartbeatScheduler {
 	/**
 	 * Parse tasks from content
 	 */
-	private parseTasks(content: string): ScheduledTask[] {
-		const tasks: ScheduledTask[] = [];
-
-		// Find "Active Tasks" section - capture everything after it
-		const activeSectionMatch = content.match(/##\s*Active Tasks\n([\s\S]*)/);
-		if (!activeSectionMatch || !activeSectionMatch[1]) {
-			return tasks;
-		}
-
-		const activeSection = activeSectionMatch[1];
-
-		// Split by task headers (## at start of line with space after)
-		// This handles multi-line content properly
-		const parts = activeSection.split(/\n## /);
-
-		for (const part of parts) {
-			const lines = part.split("\n");
-			const name = lines[0]?.trim();
-			const body = lines.slice(1).join("\n").trim();
-
-			// Skip if not a task (no field markers)
-			if (
-				!name ||
-				(!body.includes("Action:") &&
-					!body.includes("Every:") &&
-					!body.includes("RunAt:"))
-			) {
-				continue;
-			}
-
-			const task: ScheduledTask = { name, action: "" };
-
-			// Parse fields - multi-line aware
-			// Action field can span multiple lines until next field or end
-			const fieldRegex =
-				/(?:^|\n)(Every|RunAt|LastRun|Action):\s*([\s\S]*?)(?=\n(?:Every|RunAt|LastRun|Action):|$)/g;
-			const fieldMatches = Array.from(body.matchAll(fieldRegex));
-
-			for (const fieldMatch of fieldMatches) {
-				const key = fieldMatch[1]?.toLowerCase();
-				const value = (fieldMatch[2] ?? "").trim();
-
-				switch (key) {
-					case "action":
-						task.action = value;
-						break;
-					case "every":
-						task.every = value;
-						break;
-					case "runat":
-						task.runAt = value;
-						break;
-					case "lastrun":
-						task.lastRun = value;
-						break;
-				}
-			}
-
-			if (task.action) {
-				tasks.push(task);
-			}
-		}
-
-		return tasks;
-	}
-
 	/**
 	 * Check if a task is due for execution
 	 */
@@ -318,10 +328,12 @@ export class HeartbeatScheduler {
 
 		// Recurring task (Every)
 		if (task.every) {
-			// If no lastRun, use now as base to calculate next occurrence
-			// This means new tasks run on their NEXT scheduled time, not immediately
-			const lastRun = task.lastRun ? new Date(task.lastRun) : now;
-			const nextRun = parseEvery(task.every, lastRun, now);
+			if (!task.lastRun) {
+				return true;
+			}
+
+			const lastRun = new Date(task.lastRun);
+			const nextRun = parseEvery(task.every, lastRun);
 			if (!nextRun) return false;
 			return now >= nextRun;
 		}
@@ -332,43 +344,21 @@ export class HeartbeatScheduler {
 	/**
 	 * Execute a task using the Agent
 	 */
-	private async executeTask(task: ScheduledTask): Promise<void> {
-		console.log(`[Heartbeat] Executing task: ${task.name}`);
-
-		try {
-			const agent = new Agent();
-			// Wrap the task action with context that this is a scheduled task
-			const contextualizedAction = `[SCHEDULED TASK: ${task.name}]
+	private queueTask(task: ScheduledTask) {
+		const contextualizedAction = `[SCHEDULED TASK: ${task.name}]
 
 This is an automated scheduled task. Complete it and notify the user.
 
-IMPORTANT: You MUST use the send_message tool to deliver the results. Choose:
-- channel="telegram" for personal reminders
-- channel="web" for general notifications
-- channel="both" for important alerts
+IMPORTANT: Use the send_message tool to deliver the final result to Telegram.
 
 Task:
 ${task.action}`;
-
-			const result = await agent.execute(contextualizedAction, []);
-
-			if (result.blocked) {
-				console.log(
-					`[Heartbeat] Task ${task.name} blocked: ${result.question}`,
-				);
-			} else if (result.incomplete) {
-				console.log(
-					`[Heartbeat] Task ${task.name} incomplete after max iterations`,
-				);
-			} else {
-				const resultPreview = result.result?.slice(0, 100) || "No result";
-				console.log(
-					`[Heartbeat] Task ${task.name} completed: ${resultPreview}...`,
-				);
-			}
-		} catch (err) {
-			console.error(`[Heartbeat] Task ${task.name} failed:`, err);
-		}
+		const dueKey = task.runAt || task.lastRun || "initial";
+		return getTaskQueue().enqueue({
+			kind: "scheduled",
+			sourceKey: `scheduled:${task.name}:${dueKey}`,
+			input: contextualizedAction,
+		}).task;
 	}
 
 	/**
@@ -381,40 +371,8 @@ ${task.action}`;
 		try {
 			const file = Bun.file(TASKS_FILE);
 			let content = await file.text();
-
-			// Update LastRun for recurring tasks
-			for (const task of updates) {
-				const taskRegex = new RegExp(
-					`(##\\s*${this.escapeRegex(task.name)}\\s*\\n((?:\\w+:\\s*.+\\n?)*))`,
-					"g",
-				);
-
-				content = content.replace(taskRegex, (match) => {
-					if (task.lastRun) {
-						// Update or add LastRun
-						if (match.includes("LastRun:")) {
-							return match.replace(
-								/LastRun:\s*[^\n]+/,
-								`LastRun: ${task.lastRun}`,
-							);
-						}
-						// Add LastRun after the Action line
-						return match.replace(
-							/(Action:\s*.+\n)/,
-							`$1LastRun: ${task.lastRun}\n`,
-						);
-					}
-					return match;
-				});
-			}
-
-			// Remove one-time tasks
+			content = updateScheduledTasksContent(content, updates, toRemove);
 			for (const taskName of toRemove) {
-				const taskRegex = new RegExp(
-					`##\\s*${this.escapeRegex(taskName)}\\s*\\n(?:\\w+:\\s*.+\\n?)*\\n?`,
-					"g",
-				);
-				content = content.replace(taskRegex, "");
 				console.log(`[Heartbeat] Removed one-time task: ${taskName}`);
 			}
 
@@ -425,13 +383,6 @@ ${task.action}`;
 		} catch (err) {
 			console.error("[Heartbeat] Failed to update file:", err);
 		}
-	}
-
-	/**
-	 * Escape special regex characters
-	 */
-	private escapeRegex(str: string): string {
-		return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 	}
 }
 

@@ -8,6 +8,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { workspacePath } from "./workspace.js";
 
 // Telegram user types
 export interface TelegramUser {
@@ -28,7 +29,7 @@ export interface AuthResult {
 
 class TelegramAuthStore {
 	private db: Database | null = null;
-	private readonly DB_PATH = "/app/ws/s3pia.db";
+	private readonly DB_PATH = workspacePath("s3pia.db");
 	private usersCache: Map<number, TelegramUser> = new Map();
 
 	constructor() {
