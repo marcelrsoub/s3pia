@@ -53,7 +53,7 @@ test("uses generated ack text when the model output is usable", async () => {
 	expect(ack).toBe("I'm on it. I'll take a look now.");
 });
 
-test("falls back when the generated ack is unusable or throws", async () => {
+test("falls back to a pooled reply when the generated ack is unusable", async () => {
 	const fallback = await composeQueuedTelegramAck(
 		{
 			content: "Long request text".repeat(20),
@@ -62,10 +62,17 @@ test("falls back when the generated ack is unusable or throws", async () => {
 		},
 		{
 			generate: async () => "Queued and waiting for the queue to clear.",
+			fallbackMessages: [
+				"I'm on it. I'll take a look now.",
+				"Got it. I'm checking this now.",
+			],
+			random: () => 0.9,
 		},
 	);
-	expect(fallback).toBe("I'm on it. I'll reply when it's ready.");
+	expect(fallback).toBe("Got it. I'm checking this now.");
+});
 
+test("falls back to the provided static message when asked", async () => {
 	const fallbackOnError = await composeQueuedTelegramAck(
 		{
 			content: "Long request text".repeat(20),
@@ -76,6 +83,7 @@ test("falls back when the generated ack is unusable or throws", async () => {
 			generate: async () => {
 				throw new Error("boom");
 			},
+			fallbackMessage: "I'm on it. I'll reply when it's ready.",
 		},
 	);
 	expect(fallbackOnError).toBe("I'm on it. I'll reply when it's ready.");

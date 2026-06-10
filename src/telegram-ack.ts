@@ -10,13 +10,21 @@ export interface TelegramAckContext {
 export interface TelegramAckComposerOptions {
 	timeoutMs?: number;
 	fallbackMessage?: string;
+	fallbackMessages?: readonly string[];
+	random?: () => number;
 	generate?: (
 		context: TelegramAckContext,
 		signal: AbortSignal,
 	) => Promise<string>;
 }
 
-const DEFAULT_FALLBACK_MESSAGE = "I'm on it. I'll reply when it's ready.";
+const DEFAULT_FALLBACK_MESSAGES = [
+	"I'm on it. I'll take a look now.",
+	"Got it. I'm checking this now.",
+	"I'm handling it now.",
+	"I'll get to this next.",
+	"I'm working on it now.",
+] as const;
 const LONG_MESSAGE_THRESHOLD = 240;
 
 export function shouldSendQueuedAck(context: TelegramAckContext): boolean {
@@ -68,13 +76,33 @@ async function generateAckFromModel(
 	return result.text;
 }
 
+function pickRandomFallbackMessage(
+	messages: readonly string[],
+	random: () => number,
+): string {
+	if (messages.length === 0) {
+		return DEFAULT_FALLBACK_MESSAGES[0];
+	}
+
+	const index = Math.min(
+		messages.length - 1,
+		Math.max(0, Math.floor(random() * messages.length)),
+	);
+	return messages[index] || DEFAULT_FALLBACK_MESSAGES[0];
+}
+
 export async function composeQueuedTelegramAck(
 	context: TelegramAckContext,
 	options: TelegramAckComposerOptions = {},
 ): Promise<string> {
 	const timeoutMs = options.timeoutMs ?? 1_000;
-	const fallbackMessage = options.fallbackMessage ?? DEFAULT_FALLBACK_MESSAGE;
+	const fallbackMessage = options.fallbackMessage;
+	const fallbackMessages =
+		options.fallbackMessages ?? DEFAULT_FALLBACK_MESSAGES;
+	const random = options.random ?? Math.random;
 	const generate = options.generate ?? generateAckFromModel;
+	const pickFallback = (): string =>
+		fallbackMessage || pickRandomFallbackMessage(fallbackMessages, random);
 
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -84,12 +112,12 @@ export async function composeQueuedTelegramAck(
 		if (isUsableAckText(candidate)) {
 			return candidate.trim().replace(/\s+/g, " ");
 		}
-		return fallbackMessage;
+		return pickFallback();
 	} catch {
-		return fallbackMessage;
+		return pickFallback();
 	} finally {
 		clearTimeout(timer);
 	}
 }
 
-export const DEFAULT_QUEUED_ACK = DEFAULT_FALLBACK_MESSAGE;
+export const DEFAULT_QUEUED_ACK = DEFAULT_FALLBACK_MESSAGES[0];
