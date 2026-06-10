@@ -54,7 +54,7 @@ export async function loadWorkspaceContext(): Promise<string> {
 	}
 
 	contextParts.push(
-		"## SYSTEM STATUS\n\nTelegram is the only user-facing channel. Use `send_message` to reply to the configured admin chat.",
+		"## SYSTEM STATUS\n\nTelegram is the only user-facing channel. Use `send_message` to reply to the configured admin chat.\n\nYou are running inside Docker. You can use only the ports and services already exposed by the container, and you cannot publish new host ports from inside the task. If something needs to be reachable externally, ask for an external container or compose change.",
 	);
 
 	const result = contextParts.join("\n\n");
