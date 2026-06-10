@@ -9,6 +9,10 @@ dist
 # ====== WORKTREES ======
 .worktrees
 
+# ====== CODEx SCRATCH ======
+.superpowers/
+docs/superpowers/
+
 # ====== LOGS ======
 logs
 *.log
