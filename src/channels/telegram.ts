@@ -11,6 +11,10 @@ import {
 } from "../conversation.js";
 import { getEnvVar } from "../env.js";
 import { getTaskQueue } from "../task-queue.js";
+import {
+	composeQueuedTelegramAck,
+	shouldSendQueuedAck,
+} from "../telegram-ack.js";
 import { sendTelegramMessageToAdmin } from "../telegram-client.js";
 import { workspacePath } from "../workspace.js";
 
@@ -235,6 +239,14 @@ export class TelegramChannel {
 		);
 		if (existingTask) return;
 
+		const queue = getTaskQueue();
+		const backlogCount = queue.getBacklogCount();
+		const shouldAck = shouldSendQueuedAck({
+			content,
+			hasFileAttachment: content.includes("[FILE:"),
+			backlogCount,
+		});
+
 		const conversation =
 			conversationStore.get(TELEGRAM_CONVERSATION_ID) ||
 			conversationStore.create(TELEGRAM_CONVERSATION_ID);
@@ -246,18 +258,20 @@ export class TelegramChannel {
 			"telegram",
 		);
 
-		getTaskQueue().enqueue({
+		queue.enqueue({
 			kind: "telegram",
 			sourceKey: `telegram:${this.botIdentity}:${update.update_id}`,
 			input: content,
 			history,
 		});
 
-		if (content.length > 160 || content.includes("[FILE:")) {
-			await this.sendRawMessage(
-				message.chat.id,
-				"Queued. I will reply when it is complete.",
-			);
+		if (shouldAck) {
+			const ack = await composeQueuedTelegramAck({
+				content,
+				hasFileAttachment: content.includes("[FILE:"),
+				backlogCount,
+			});
+			await this.sendRawMessage(message.chat.id, ack);
 		}
 	}
 

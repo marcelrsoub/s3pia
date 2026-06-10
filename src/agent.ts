@@ -5,12 +5,6 @@
  * which automatically handles tool call/result loops.
  */
 
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createDeepSeek } from "@ai-sdk/deepseek";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createGroq } from "@ai-sdk/groq";
-import { createOpenAI } from "@ai-sdk/openai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import {
 	APICallError,
 	generateText,
@@ -18,15 +12,13 @@ import {
 	RetryError,
 	stepCountIs,
 } from "ai";
-import { createZhipu } from "zhipu-ai-provider";
 import { aiTools } from "./ai-tools.js";
-import { getApiKey } from "./api-keys.js";
 import type { Message } from "./conversation.js";
 import { getEnvSummary } from "./env.js";
 import type { Action, ExecutionResult } from "./memory.js";
 import { getMemory } from "./memory.js";
+import { createConfiguredLanguageModel } from "./model.js";
 import { loadWorkspaceContext } from "./prompts.js";
-import { getProviderByName } from "./providers/registry.js";
 import { getSkills } from "./skills.js";
 
 function summarizeActions(actions: Action[]): string | null {
@@ -374,55 +366,7 @@ ${history.map((h) => `- ${h.task.slice(0, 80)}... -> ${h.result?.slice(0, 80)}..
 	}
 
 	private getModel(): LanguageModel {
-		const providerName = process.env.AI_PROVIDER || "zai";
-		const provider = getProviderByName(providerName);
-
-		if (!provider) {
-			throw new Error(`Unknown provider: ${providerName}`);
-		}
-
-		const model = process.env.AI_MODEL || provider.defaultModel;
-		const apiKey = getApiKey(providerName);
-
-		if (!apiKey) {
-			throw new Error(`API key not configured for provider: ${providerName}`);
-		}
-
-		switch (providerName) {
-			case "zai": {
-				const zhipu = createZhipu({
-					apiKey,
-					baseURL: "https://api.z.ai/api/coding/paas/v4",
-				});
-				return zhipu(model);
-			}
-			case "openrouter": {
-				const openrouter = createOpenRouter({ apiKey });
-				return openrouter.chat(model);
-			}
-			case "anthropic": {
-				const anthropic = createAnthropic({ apiKey });
-				return anthropic(model);
-			}
-			case "openai": {
-				const openai = createOpenAI({ apiKey });
-				return openai.chat(model);
-			}
-			case "deepseek": {
-				const deepseek = createDeepSeek({ apiKey });
-				return deepseek(model);
-			}
-			case "groq": {
-				const groq = createGroq({ apiKey });
-				return groq(model);
-			}
-			case "gemini": {
-				const google = createGoogleGenerativeAI({ apiKey });
-				return google(model);
-			}
-			default:
-				throw new Error(`Unsupported provider: ${providerName}`);
-		}
+		return createConfiguredLanguageModel();
 	}
 }
 

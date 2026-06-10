@@ -205,6 +205,15 @@ export class TaskQueue {
 		return row ? this.mapRow(row) : null;
 	}
 
+	getBacklogCount(): number {
+		const row = this.db
+			.query(
+				"SELECT COUNT(*) AS count FROM agent_tasks WHERE status IN ('queued', 'running')",
+			)
+			.get() as { count: number } | null;
+		return row?.count || 0;
+	}
+
 	retry(sourceKey: string): boolean {
 		const task = this.getBySourceKey(sourceKey);
 		if (!task || task.status !== "failed") return false;
