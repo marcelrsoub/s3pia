@@ -81,13 +81,15 @@ export async function statusCommand(): Promise<void> {
 	const gateway = getGateway();
 	if (gateway.isRunning()) {
 		console.log("Gateway Status:");
-		const channelStatus = gateway.getStatus();
-		for (const [name, status] of Object.entries(channelStatus)) {
-			const running = status.running ? "✓" : "✗";
-			console.log(
-				`  ${name}: ${running} ${status.enabled ? "enabled" : "disabled"}`,
-			);
-		}
+		const telegramStatus = gateway.getStatus().telegram ?? {
+			name: "telegram",
+			enabled: false,
+			running: false,
+		};
+		const running = telegramStatus.running ? "✓" : "✗";
+		console.log(
+			`  telegram: ${running} ${telegramStatus.enabled ? "enabled" : "disabled"}`,
+		);
 	} else {
 		console.log("Gateway: Not running");
 	}
@@ -97,10 +99,15 @@ export async function statusCommand(): Promise<void> {
  * Config command - manage settings
  */
 export async function configCommand(
-	action: string,
+	action: string | undefined,
 	key?: string,
 	value?: string,
 ): Promise<void> {
+	if (!action) {
+		console.log("Usage: config <get|set|validate> [key] [value]");
+		return;
+	}
+
 	switch (action) {
 		case "get": {
 			if (key) {
@@ -145,8 +152,15 @@ export async function configCommand(
 /**
  * Gateway command - control the gateway service
  */
-export async function gatewayCommand(action: string): Promise<void> {
+export async function gatewayCommand(
+	action: string | undefined,
+): Promise<void> {
 	const gateway = getGateway();
+
+	if (!action) {
+		console.log("Usage: gateway <start|stop|status|restart>");
+		return;
+	}
 
 	switch (action) {
 		case "start": {
@@ -172,32 +186,26 @@ export async function gatewayCommand(action: string): Promise<void> {
 		case "status": {
 			if (gateway.isRunning()) {
 				console.log("Gateway is running");
-				const channelStatus = gateway.getStatus();
-				for (const [name, status] of Object.entries(channelStatus)) {
-					const running = status.running ? "✓" : "✗";
-					console.log(`  ${name}: ${running}`);
-				}
+				const telegramStatus = gateway.getStatus().telegram ?? {
+					name: "telegram",
+					enabled: false,
+					running: false,
+				};
+				const running = telegramStatus.running ? "✓" : "✗";
+				console.log(`  telegram: ${running}`);
 			} else {
 				console.log("Gateway is not running");
 			}
 			break;
 		}
 		case "restart": {
-			const channel = process.argv[4]; // Optional channel name
-			if (channel) {
-				console.log(`Restarting ${channel} channel...`);
-				await gateway.restartChannel(channel);
-				console.log(`${channel} channel restarted`);
-			} else {
-				console.log("Restarting all channels...");
-				await gateway.stop();
-				await gateway.start();
-				console.log("All channels restarted");
-			}
+			console.log("Restarting Telegram channel...");
+			await gateway.reinitializeTelegramChannel();
+			console.log("Telegram channel restarted");
 			break;
 		}
 		default:
-			console.log("Usage: gateway <start|stop|status|restart> [channel]");
+			console.log("Usage: gateway <start|stop|status|restart>");
 	}
 }
 
@@ -234,7 +242,6 @@ export async function executeCli(): Promise<void> {
 			await gatewayCommand(action);
 			break;
 		}
-		case "help":
 		default:
 			console.log(`
 SepiaBot CLI
@@ -244,8 +251,8 @@ Usage: bun run src/cli/index.ts <command> [args...]
 Commands:
   agent <message>       Send a message to the agent
   status                Show system status
-  config <get|set|validate> [key] [value]  Manage configuration
-  gateway <start|stop|status|restart> [channel]  Control gateway
+	  config <get|set|validate> [key] [value]  Manage configuration
+	  gateway <start|stop|status|restart>  Control the Telegram gateway
 
 Examples:
   bun run src/cli/index.ts agent "What is 2+2?"

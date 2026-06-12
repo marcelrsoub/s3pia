@@ -6,6 +6,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { workspacePath } from "./workspace.js";
 
 export interface Action {
 	type: "tool" | "done" | "ask";
@@ -42,9 +43,18 @@ export interface Skill {
 	created_at?: number;
 }
 
+interface ExecutionRow {
+	task: string;
+	result: string | null;
+	actions: string | null;
+	iterations: number;
+	duration: number;
+	incomplete: number;
+}
+
 class Memory {
 	private db: Database;
-	private readonly DB_PATH = "/app/ws/s3pia.db";
+	private readonly DB_PATH = workspacePath("s3pia.db");
 
 	constructor(db?: Database) {
 		// Use provided db or create new one
@@ -199,12 +209,12 @@ class Memory {
         ORDER BY created_at DESC
         LIMIT ?
       `)
-				.all(limit) as Array<any>;
+				.all(limit) as ExecutionRow[];
 
 			return rows.map((row) => ({
 				task: row.task,
-				result: row.result,
-				actions: JSON.parse(row.actions || "[]"),
+				result: row.result || undefined,
+				actions: JSON.parse(row.actions || "[]") as Action[],
 				iterations: row.iterations,
 				duration: row.duration,
 				incomplete: row.incomplete === 1,

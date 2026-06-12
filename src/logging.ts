@@ -6,6 +6,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { workspacePath } from "./workspace.js";
 
 export interface LogEntry {
 	id: string;
@@ -19,7 +20,7 @@ export interface LogEntry {
 
 class LoggingSystem {
 	private db: Database;
-	private readonly DB_PATH = "/app/ws/s3pia.db";
+	private readonly DB_PATH = workspacePath("s3pia.db");
 
 	constructor() {
 		this.db = new Database(this.DB_PATH);

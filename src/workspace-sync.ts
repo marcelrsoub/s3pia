@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { workspacePath } from "./workspace.js";
 
 export interface WorkspaceSyncResult {
 	copiedFiles: string[];
@@ -9,7 +10,10 @@ function isSyncableSkillFile(filename: string): boolean {
 	return filename.endsWith(".md") && !filename.startsWith("_");
 }
 
-async function copyFileIfMissing(sourcePath: string, destinationPath: string): Promise<boolean> {
+async function copyFileIfMissing(
+	sourcePath: string,
+	destinationPath: string,
+): Promise<boolean> {
 	if (existsSync(destinationPath)) {
 		return false;
 	}
@@ -20,8 +24,10 @@ async function copyFileIfMissing(sourcePath: string, destinationPath: string): P
 }
 
 export async function syncDefaultWorkspaceFiles(
-	workspaceDir = "/app/ws",
-	templateDir = "/app/ws-template",
+	workspaceDir = workspacePath(),
+	templateDir = existsSync("/app/ws-template")
+		? "/app/ws-template"
+		: resolve(process.cwd(), "ws"),
 ): Promise<WorkspaceSyncResult> {
 	const copiedFiles: string[] = [];
 	const templateSkillsDir = join(templateDir, "skills");

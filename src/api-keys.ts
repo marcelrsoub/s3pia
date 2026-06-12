@@ -255,10 +255,3 @@ export async function getAllApiKeys(): Promise<Record<string, string>> {
 
 	return apiKeys;
 }
-
-// Make getApiKey available globally for tool modules
-// This allows tools to call getApiKey() without importing
-if (typeof global !== "undefined") {
-	(global as any).getApiKey = getApiKey;
-	(global as any).getSetting = getSetting;
-}

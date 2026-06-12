@@ -28,23 +28,23 @@ export default defineConfig({
 	server: {
 		port: 5173,
 		proxy: {
-			"/ws": {
-				target: "http://localhost:3210",
-				ws: true,
-			},
-			"/chat": {
-				target: "http://localhost:3210",
-				changeOrigin: true,
-			},
-			"/conversation": {
-				target: "http://localhost:3210",
-				changeOrigin: true,
-			},
-			"/jobs": {
+			"/api": {
 				target: "http://localhost:3210",
 				changeOrigin: true,
 			},
 			"/health": {
+				target: "http://localhost:3210",
+				changeOrigin: true,
+			},
+			"/files": {
+				target: "http://localhost:3210",
+				changeOrigin: true,
+			},
+			"/images": {
+				target: "http://localhost:3210",
+				changeOrigin: true,
+			},
+			"/pages": {
 				target: "http://localhost:3210",
 				changeOrigin: true,
 			},

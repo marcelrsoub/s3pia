@@ -13,10 +13,17 @@ export function parseFileReferences(
 	content: string,
 ): Array<{ path: string; displayName: string }> {
 	const refs: Array<{ path: string; displayName: string }> = [];
-	let match;
+	let match: RegExpExecArray | null;
 
-	while ((match = FILE_REF_PATTERN.exec(content)) !== null) {
+	while (true) {
+		match = FILE_REF_PATTERN.exec(content);
+		if (match === null) {
+			break;
+		}
 		const path = match[1];
+		if (!path) {
+			continue;
+		}
 		const filename = path.split("/").pop() || path;
 		refs.push({ path, displayName: filename });
 	}

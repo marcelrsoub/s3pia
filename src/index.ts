@@ -31,6 +31,7 @@ const { getGateway, startGateway, stopGateway } = await import(
 );
 const { startHeartbeat, stopHeartbeat } = await import("./heartbeat.js");
 const { startServer } = await import("./server.js");
+const { startTaskQueue, stopTaskQueue } = await import("./task-queue.js");
 
 // Initialize subsystems
 console.log("Starting SepiaBot...");
@@ -59,12 +60,12 @@ if (missingVars.length > 0) {
 	console.log(" Configuration loaded");
 }
 
-// Start HTTP server with WebSocket support
 const server = startServer();
 console.log(` HTTP server listening on port ${server.port}`);
 
 // Start gateway service (Telegram, Web channels)
 async function startServices() {
+	startTaskQueue();
 	await startGateway();
 	console.log(" Gateway service started");
 
@@ -94,6 +95,7 @@ const shutdown = async () => {
 	console.log("\n Shutting down...");
 	await stopHeartbeat();
 	await stopGateway();
+	stopTaskQueue();
 	conversationStore.shutdown();
 	process.exit(0);
 };

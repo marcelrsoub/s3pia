@@ -1,7 +1,8 @@
 import { existsSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { workspacePath } from "./workspace.js";
 
-export const PUBLIC_PAGES_ROOT = "/app/ws/public_pages";
+export const PUBLIC_PAGES_ROOT = workspacePath("public_pages");
 
 const MIME_TYPES: Record<string, string> = {
 	html: "text/html; charset=utf-8",
@@ -48,7 +49,10 @@ function resolvePublicPagePath(
 	const candidate = resolve(root, relativePath);
 	const pathInsideRoot = relative(root, candidate);
 
-	if (pathInsideRoot.startsWith("..") || (pathInsideRoot === "" && candidate !== root)) {
+	if (
+		pathInsideRoot.startsWith("..") ||
+		(pathInsideRoot === "" && candidate !== root)
+	) {
 		return "invalid";
 	}
 

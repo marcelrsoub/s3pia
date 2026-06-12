@@ -5,23 +5,20 @@
  * which automatically handles tool call/result loops.
  */
 
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createDeepSeek } from "@ai-sdk/deepseek";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createGroq } from "@ai-sdk/groq";
-import { createOpenAI } from "@ai-sdk/openai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { APICallError, generateText, RetryError, stepCountIs } from "ai";
-import { createZhipu } from "zhipu-ai-provider";
+import {
+	APICallError,
+	generateText,
+	type LanguageModel,
+	RetryError,
+	stepCountIs,
+} from "ai";
 import { aiTools } from "./ai-tools.js";
-import { getApiKey } from "./api-keys.js";
-import { setSourceChannel } from "./context.js";
 import type { Message } from "./conversation.js";
 import { getEnvSummary } from "./env.js";
 import type { Action, ExecutionResult } from "./memory.js";
 import { getMemory } from "./memory.js";
+import { createConfiguredLanguageModel } from "./model.js";
 import { loadWorkspaceContext } from "./prompts.js";
-import { getProviderByName } from "./providers/registry.js";
 import { getSkills } from "./skills.js";
 
 function summarizeActions(actions: Action[]): string | null {
@@ -130,13 +127,10 @@ class Agent {
 	async execute(
 		task: string,
 		conversationHistory?: Message[],
-		sourceChannel?: string,
 	): Promise<ExecutionResult> {
 		const startTime = Date.now();
 
 		console.log(`[Agent] Starting task: "${task.slice(0, 100)}..."`);
-
-		setSourceChannel((sourceChannel as "web" | "telegram") || "web");
 
 		const systemPrompt = await this.buildSystemPrompt();
 
@@ -161,19 +155,28 @@ class Agent {
 			messages.push({ role: "user", content: task });
 		}
 
+		const abortController = new AbortController();
+		const timeoutId = setTimeout(
+			() => abortController.abort(),
+			this.config.maxTime,
+		);
+
 		try {
 			const result = await generateText({
-				model: this.getModel() as any,
+				model: this.getModel(),
 				system: systemPrompt,
 				messages,
 				tools: aiTools,
 				toolChoice: "auto",
 				stopWhen: stepCountIs(this.config.maxSteps),
 				maxRetries: 2,
+				abortSignal: abortController.signal,
 			});
+			clearTimeout(timeoutId);
 
 			const actions: Action[] = [];
 			let usedSendMessage = false;
+			let blockedQuestion: string | undefined;
 
 			if (result.steps) {
 				for (const step of result.steps) {
@@ -182,20 +185,31 @@ class Agent {
 							if (tc.toolName === "send_message") {
 								usedSendMessage = true;
 							}
+							if (
+								tc.toolName === "ask_user" &&
+								typeof tc.input === "object" &&
+								tc.input !== null &&
+								"question" in tc.input &&
+								typeof tc.input.question === "string"
+							) {
+								blockedQuestion = tc.input.question;
+							}
 
 							actions.push({
 								type: "tool",
 								tool: tc.toolName,
-								params: (tc as any).args as Record<string, unknown>,
+								params:
+									typeof tc.input === "object" && tc.input !== null
+										? (tc.input as Record<string, unknown>)
+										: {},
 							});
 
 							const toolResult = step.toolResults?.find(
-								(tr: any) => tr.toolCallId === tc.toolCallId,
+								(tr) => tr.toolCallId === tc.toolCallId,
 							);
-							if (toolResult && actions.length > 0) {
-								actions[actions.length - 1]!.result = (
-									toolResult as any
-								).result;
+							const action = actions.at(-1);
+							if (toolResult && action) {
+								action.result = toolResult.output;
 							}
 						}
 					}
@@ -217,12 +231,38 @@ class Agent {
 				iterations: result.steps?.length || 1,
 				duration: Date.now() - startTime,
 				usedSendMessage,
+				blocked: Boolean(blockedQuestion),
+				question: blockedQuestion,
 			};
 
 			await this.memory.saveExecution(finalResult);
 			return finalResult;
 		} catch (err) {
+			clearTimeout(timeoutId);
 			console.error("[Agent] generateText error:", err);
+
+			if (
+				err instanceof Error &&
+				(err.name === "AbortError" || err.message.includes("aborted"))
+			) {
+				const timeoutResult: ExecutionResult = {
+					task,
+					result: `Error: task exceeded the ${this.config.maxTime / 1000}s time limit`,
+					actions: [],
+					iterations: 0,
+					duration: Date.now() - startTime,
+					incomplete: true,
+					usedSendMessage: false,
+					error: {
+						type: "api_error",
+						message: "Task timed out",
+						provider: process.env.AI_PROVIDER || "zai",
+					},
+				};
+
+				await this.memory.saveExecution(timeoutResult);
+				return timeoutResult;
+			}
 
 			const providerName = process.env.AI_PROVIDER || "zai";
 			const apiError = classifyApiError(err, providerName);
@@ -274,13 +314,14 @@ class Agent {
 
 RULES:
 1. Complete the task fully using available tools before responding
-2. Only use send_message when the task is complete or you need user input
-3. Work silently during execution - don't send progress updates or acknowledgments
-4. **ALWAYS provide a summary of what you did and the result after completing the task**
-5. To show images or files, use the 'files' parameter in send_message
-6. If information is unclear, make a reasonable assumption and explain it
-7. Use skills in /app/ws/skills/ when appropriate - read them with read_file
-8. If the user specifies which tool(s) to use, respect that restriction strictly - do not switch to other tools
+2. Use send_message only for the final completed response
+3. If required information is missing, call ask_user with one clear question and stop
+4. Work silently during execution - don't send progress updates or acknowledgments
+5. **ALWAYS provide a summary of what you did and the result after completing the task**
+6. To show images or files, use the 'files' parameter in send_message
+7. If information is unclear but nonessential, make a reasonable assumption and explain it
+8. Use skills in /app/ws/skills/ when appropriate - read them with read_file
+9. If the user specifies which tool(s) to use, respect that restriction strictly - do not switch to other tools
 
 ---
 
@@ -324,56 +365,8 @@ ${history.map((h) => `- ${h.task.slice(0, 80)}... -> ${h.result?.slice(0, 80)}..
 		return context;
 	}
 
-	private getModel() {
-		const providerName = process.env.AI_PROVIDER || "zai";
-		const provider = getProviderByName(providerName);
-
-		if (!provider) {
-			throw new Error(`Unknown provider: ${providerName}`);
-		}
-
-		const model = process.env.AI_MODEL || provider.defaultModel;
-		const apiKey = getApiKey(providerName);
-
-		if (!apiKey) {
-			throw new Error(`API key not configured for provider: ${providerName}`);
-		}
-
-		switch (providerName) {
-			case "zai": {
-				const zhipu = createZhipu({
-					apiKey,
-					baseURL: "https://api.z.ai/api/coding/paas/v4",
-				});
-				return zhipu(model);
-			}
-			case "openrouter": {
-				const openrouter = createOpenRouter({ apiKey });
-				return openrouter.chat(model);
-			}
-			case "anthropic": {
-				const anthropic = createAnthropic({ apiKey });
-				return anthropic(model);
-			}
-			case "openai": {
-				const openai = createOpenAI({ apiKey });
-				return openai.chat(model);
-			}
-			case "deepseek": {
-				const deepseek = createDeepSeek({ apiKey });
-				return deepseek(model);
-			}
-			case "groq": {
-				const groq = createGroq({ apiKey });
-				return groq(model);
-			}
-			case "gemini": {
-				const google = createGoogleGenerativeAI({ apiKey });
-				return google(model);
-			}
-			default:
-				throw new Error(`Unsupported provider: ${providerName}`);
-		}
+	private getModel(): LanguageModel {
+		return createConfiguredLanguageModel();
 	}
 }
 

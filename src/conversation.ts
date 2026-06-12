@@ -6,6 +6,9 @@
  */
 
 import { Database } from "bun:sqlite";
+import { workspacePath } from "./workspace.js";
+
+export const TELEGRAM_CONVERSATION_ID = "telegram";
 
 export interface Message {
 	role: "user" | "assistant" | "system" | "worker";
@@ -34,7 +37,7 @@ class ConversationStore {
 	private maxMessages = 50;
 	private maxConversations = 100;
 	private db: Database | null = null;
-	private readonly DB_PATH = "/app/ws/s3pia.db";
+	private readonly DB_PATH = workspacePath("s3pia.db");
 	private telegramCallback?: (content: string) => void;
 
 	constructor() {
@@ -209,7 +212,8 @@ class ConversationStore {
 				// Remove oldest non-system messages
 				let trimmed = 0;
 				for (let i = 0; i < conv.messages.length && trimmed < toTrim; i++) {
-					if (conv.messages[i].role !== "system") {
+					const currentMessage = conv.messages[i];
+					if (currentMessage && currentMessage.role !== "system") {
 						conv.messages.splice(i, 1);
 						i--;
 						trimmed++;
@@ -334,19 +338,3 @@ class ConversationStore {
 
 // Global instance
 export const conversationStore = new ConversationStore();
-
-// Session-based conversation ID from request
-export function getConversationId(request: Request): string {
-	const url = new URL(request.url);
-	const sessionParam = url.searchParams.get("conversation");
-	if (sessionParam) return sessionParam;
-
-	// Use session cookie if available
-	const cookieHeader = request.headers.get("Cookie");
-	if (cookieHeader) {
-		const sessionMatch = cookieHeader.match(/conversation=([^;]+)/);
-		if (sessionMatch) return sessionMatch[1];
-	}
-
-	return "default";
-}

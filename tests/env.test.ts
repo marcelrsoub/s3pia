@@ -6,13 +6,15 @@ import {
 	loadEnvFile,
 	setEnvVar,
 } from "../src/env";
+import { workspacePath } from "../src/workspace";
 
 // Helper to create a temp env file for testing
-const TEST_ENV_FILE = "/app/ws/config/.env";
+const TEST_ENV_FILE = workspacePath("config", ".env");
 const BACKUP_ENV_FILE = "/tmp/s3pia.env.backup";
 
 // Helper functions for testing parser in isolation
 async function writeTestEnvFile(content: string): Promise<void> {
+	await Bun.$`mkdir -p ${workspacePath("config")}`;
 	// Backup existing .env file
 	try {
 		const existingFile = Bun.file(TEST_ENV_FILE);
@@ -32,6 +34,7 @@ async function readTestEnvFile(): Promise<string> {
 
 async function restoreTestEnvFile(): Promise<void> {
 	try {
+		await Bun.$`mkdir -p ${workspacePath("config")}`;
 		const backup = Bun.file(BACKUP_ENV_FILE);
 		if (await backup.exists()) {
 			await Bun.write(TEST_ENV_FILE, await backup.text());

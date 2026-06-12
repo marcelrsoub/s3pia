@@ -5,8 +5,10 @@
  * Hot-reloads into process.env on every write.
  */
 
-const CONFIG_DIR = "/app/ws/config";
-const ENV_FILE = `${CONFIG_DIR}/.env`;
+import { workspacePath } from "./workspace.js";
+
+const CONFIG_DIR = workspacePath("config");
+const ENV_FILE = workspacePath("config", ".env");
 
 // Track which keys are secrets (never expose in prompts)
 const SECRET_KEYS = new Set([
@@ -185,42 +187,47 @@ function parseEnvLine(line: string): EnvLine | null {
 	let i = 0;
 
 	// Skip leading whitespace in key
-	while (i < line.length && /\s/.test(line[i])) i++;
+	while (i < line.length && /\s/.test(line.charAt(i))) i++;
 
 	// Find the key
 	const keyStart = i;
-	while (i < line.length && line[i] !== "=" && !/\s/.test(line[i])) i++;
+	while (
+		i < line.length &&
+		line.charAt(i) !== "=" &&
+		!/\s/.test(line.charAt(i))
+	)
+		i++;
 	const key = line.slice(keyStart, i);
 
 	// Skip whitespace after key
-	while (i < line.length && /\s/.test(line[i])) i++;
+	while (i < line.length && /\s/.test(line.charAt(i))) i++;
 
 	// Expect =
-	if (i >= line.length || line[i] !== "=") {
+	if (i >= line.length || line.charAt(i) !== "=") {
 		// Not a valid variable line, treat as comment/preserve
 		return { type: "comment", originalLine: line };
 	}
 	i++; // Skip =
 
 	// Skip whitespace after =
-	while (i < line.length && /\s/.test(line[i])) i++;
+	while (i < line.length && /\s/.test(line.charAt(i))) i++;
 
 	// Extract value (handling quoted values with = inside)
 	const valueStart = i;
 	let valueEnd = i;
 
-	if (i < line.length && (line[i] === '"' || line[i] === "'")) {
+	if (i < line.length && (line.charAt(i) === '"' || line.charAt(i) === "'")) {
 		// Quoted value
-		const quote = line[i];
+		const quote = line.charAt(i);
 		i++; // Skip opening quote
 		valueEnd = i;
 
 		while (i < line.length) {
-			if (line[i] === "\\" && i + 1 < line.length) {
+			if (line.charAt(i) === "\\" && i + 1 < line.length) {
 				// Skip escaped character
 				i += 2;
 				valueEnd = i;
-			} else if (line[i] === quote) {
+			} else if (line.charAt(i) === quote) {
 				// Closing quote
 				valueEnd = i + 1;
 				i++;
@@ -232,7 +239,7 @@ function parseEnvLine(line: string): EnvLine | null {
 		}
 	} else {
 		// Unquoted value - read until # or end of line
-		while (i < line.length && line[i] !== "#") {
+		while (i < line.length && line.charAt(i) !== "#") {
 			i++;
 			valueEnd = i;
 		}
@@ -242,8 +249,8 @@ function parseEnvLine(line: string): EnvLine | null {
 
 	// Check for inline comment
 	let inlineComment: string | undefined;
-	while (i < line.length && /\s/.test(line[i])) i++;
-	if (i < line.length && line[i] === "#") {
+	while (i < line.length && /\s/.test(line.charAt(i))) i++;
+	if (i < line.length && line.charAt(i) === "#") {
 		inlineComment = line.slice(i).trim();
 	}
 
@@ -536,9 +543,10 @@ export async function setEnvVar(
 		if (!keyFound) {
 			// Add a blank line before new variable if file doesn't end with one
 			// Check both last line type and if content ends with newline
+			const lastLine = lines.at(-1);
 			const needsSpacing =
 				lines.length > 0 &&
-				lines[lines.length - 1].type !== "empty" &&
+				lastLine?.type !== "empty" &&
 				!existingContent.endsWith("\n");
 			if (needsSpacing) {
 				lines.push({ type: "empty" });

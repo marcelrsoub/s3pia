@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import {
+	parseScheduledTasks,
+	updateScheduledTasksContent,
+} from "../src/heartbeat";
 
 const TEST_TASKS_FILE = "/tmp/test-scheduled.md";
 
@@ -38,71 +42,7 @@ LastRun: 2026-02-20T10:00:00Z
 Action: Quick health check
 `;
 
-function parseTasks(content: string): Array<{
-	name: string;
-	action: string;
-	every?: string;
-	runAt?: string;
-	lastRun?: string;
-}> {
-	const tasks: Array<{
-		name: string;
-		action: string;
-		every?: string;
-		runAt?: string;
-		lastRun?: string;
-	}> = [];
-
-	const activeSectionMatch = content.match(/##\s*Active Tasks\n([\s\S]*)/);
-	if (!activeSectionMatch || !activeSectionMatch[1]) {
-		return tasks;
-	}
-
-	const activeSection = activeSectionMatch[1];
-
-	const parts = activeSection.split(/\n## /);
-
-	for (const part of parts) {
-		const lines = part.split("\n");
-		const name = lines[0]?.trim();
-		const body = lines.slice(1).join("\n").trim();
-
-		if (!name || (!body.includes("Action:") && !body.includes("Every:") && !body.includes("RunAt:"))) {
-			continue;
-		}
-
-		const task: { name: string; action: string; every?: string; runAt?: string; lastRun?: string } = { name, action: "" };
-
-		const fieldRegex = /(?:^|\n)(Every|RunAt|LastRun|Action):\s*([\s\S]*?)(?=\n(?:Every|RunAt|LastRun|Action):|$)/g;
-		const fieldMatches = Array.from(body.matchAll(fieldRegex));
-
-		for (const fieldMatch of fieldMatches) {
-			const key = fieldMatch[1]?.toLowerCase();
-			const value = (fieldMatch[2] ?? "").trim();
-
-			switch (key) {
-				case "action":
-					task.action = value;
-					break;
-				case "every":
-					task.every = value;
-					break;
-				case "runat":
-					task.runAt = value;
-					break;
-				case "lastrun":
-					task.lastRun = value;
-					break;
-			}
-		}
-
-		if (task.action) {
-			tasks.push(task);
-		}
-	}
-
-	return tasks;
-}
+const parseTasks = parseScheduledTasks;
 
 beforeEach(async () => {
 	await Bun.write(TEST_TASKS_FILE, SAMPLE_TASKS);
@@ -221,4 +161,49 @@ Action: Send message: "Hello: World"
 
 	expect(tasks).toHaveLength(1);
 	expect(tasks[0]?.action).toBe('Send message: "Hello: World"');
+});
+
+test("updates LastRun on a multiline recurring task", () => {
+	const updated = updateScheduledTasksContent(
+		SAMPLE_TASKS,
+		[
+			{
+				name: "Multi-line Action Task",
+				action: "",
+				lastRun: "2026-06-08T12:00:00.000Z",
+			},
+		],
+		[],
+	);
+
+	const task = parseScheduledTasks(updated).find(
+		(candidate) => candidate.name === "Multi-line Action Task",
+	);
+	expect(task?.lastRun).toBe("2026-06-08T12:00:00.000Z");
+	expect(task?.action).toContain("If ALL conditions are met");
+});
+
+test("removes a multiline one-time task without removing the next task", () => {
+	const content = `${SAMPLE_TASKS}
+## Multiline One-time
+RunAt: 2026-06-08T12:00:00Z
+Action: First line
+Second line
+Third line
+
+## Following Task
+Every: 1 hour
+Action: Keep me
+`;
+	const updated = updateScheduledTasksContent(
+		content,
+		[],
+		["Multiline One-time"],
+	);
+
+	expect(updated).not.toContain("## Multiline One-time");
+	expect(updated).toContain("## Following Task");
+	expect(parseScheduledTasks(updated).some((task) => task.name === "Following Task")).toBe(
+		true,
+	);
 });
