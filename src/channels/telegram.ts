@@ -251,12 +251,7 @@ export class TelegramChannel {
 			conversationStore.get(TELEGRAM_CONVERSATION_ID) ||
 			conversationStore.create(TELEGRAM_CONVERSATION_ID);
 		const history = [...conversation.messages];
-		conversationStore.addMessage(
-			TELEGRAM_CONVERSATION_ID,
-			"user",
-			content,
-			"telegram",
-		);
+		conversationStore.addMessage(TELEGRAM_CONVERSATION_ID, "user", content);
 
 		queue.enqueue({
 			kind: "telegram",

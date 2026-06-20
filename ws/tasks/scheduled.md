@@ -30,7 +30,7 @@ Action: [description of what to do]
 - The `LastRun` timestamp is automatically updated after execution
 - One-time tasks (using `RunAt`) are removed after execution
 - The `Action` field can span multiple lines
-- Use the `send_message` tool to communicate results to channels: "web", "telegram", or "both"
+- Use the `send_message` tool to communicate results to Telegram
 
 ---
 
@@ -40,7 +40,7 @@ Add tasks below. They will be parsed and executed when due.
 
 ## Proactive Check-in
 Every: 2 days at 10:00
-Action: Send a friendly check-in message to the user via telegram (or web if telegram not available).
+Action: Send a friendly check-in message to the user via telegram.
 
 Be personal and warm. Briefly mention something from recent conversations or ask about their goals/projects. Keep it short - 1-2 sentences. Don't be robotic or overly formal.
 
@@ -54,7 +54,7 @@ Examples of good messages:
 ## Daily Status Report
 Every: 1 day at 09:00
 LastRun: 2026-02-17T09:00:00Z
-Action: Check system health and send a summary to the web interface
+Action: Check system health and send a summary to Telegram
 
 ## Weekly Cleanup
 Every: Monday at 00:00

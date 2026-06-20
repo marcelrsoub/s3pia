@@ -51,7 +51,7 @@ If all conditions are met, send a message. If not, do nothing.
 
 **Channel selection for follow-ups:**
 - Prefer Telegram if configured (check if TELEGRAM_BOT_TOKEN exists)
-- Fall back to web interface if Telegram is not configured
+- Do not use the web interface as a chat fallback; it is only for configuration
 
 **What makes a good follow-up:**
 - Reference something specific they mentioned ("How did that presentation go?")

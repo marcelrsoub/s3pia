@@ -371,12 +371,7 @@ export class TaskQueue {
 					[Date.now(), task.id],
 				);
 				this.recordEvent(task.id, "delivered");
-				conversationStore.addMessage(
-					TELEGRAM_CONVERSATION_ID,
-					"assistant",
-					text,
-					"telegram",
-				);
+				conversationStore.addMessage(TELEGRAM_CONVERSATION_ID, "assistant", text);
 			}
 		}
 	}
