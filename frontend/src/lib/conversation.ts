@@ -1,19 +1,16 @@
 import type { FileAttachment } from "@/lib/channel-types";
 
 /**
- * Default conversation ID for web UI and Telegram
- * Matches backend constant TELEGRAM.DEFAULT_CONVERSATION_ID
+ * Shared conversation ID used for Telegram message history.
+ * Matches the backend Telegram conversation namespace.
  */
 const DEFAULT_CONVERSATION_ID = "default";
 
 /**
- * Get or create a conversation ID from localStorage.
- * Persists across page refreshes for continuity.
- * Uses "default" for consistency with backend and Telegram integration.
+ * Get the shared conversation ID.
+ * The config UI does not maintain a separate chat surface.
  */
 export function getOrCreateConversationId(): string {
-	// Use "default" consistently for web UI to match backend behavior
-	// This ensures Telegram messages appear in the web UI
 	return DEFAULT_CONVERSATION_ID;
 }
 
@@ -35,7 +32,7 @@ export function formatMessage(content: string): string {
 }
 
 /**
- * Message types for the chat interface
+ * Message types for conversation data
  */
 export type MessageType = "user" | "assistant" | "system" | "error" | "worker";
 
@@ -48,7 +45,6 @@ export interface Message {
 	content: string;
 	timestamp: Date;
 	files?: FileAttachment[];
-	source?: "web" | "telegram"; // Track where the message originated
 }
 
 /**
@@ -58,7 +54,6 @@ export function createMessage(
 	role: MessageType,
 	content: string,
 	files?: FileAttachment[],
-	source?: "web" | "telegram",
 	timestamp?: Date,
 ): Message {
 	return {
@@ -67,6 +62,5 @@ export function createMessage(
 		content,
 		timestamp: timestamp || new Date(),
 		files,
-		source,
 	};
 }

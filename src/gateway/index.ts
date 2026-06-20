@@ -1,7 +1,7 @@
 /**
  * Gateway Service Entry Point
  *
- * Starts the SepiaBot gateway service with all enabled channels.
+ * Starts the SepiaBot gateway service with Telegram enabled.
  * Run with: bun run src/gateway/index.ts
  *
  * Inspired by nanobot: https://github.com/HKUDS/nanobot
@@ -25,18 +25,18 @@ async function startGatewayService(): Promise<void> {
 		console.log("   Please configure the bot first\n");
 	}
 
-	// Start HTTP server (for web UI)
+	// Start HTTP server (for config UI)
 	const server = startServer();
 	console.log(`📡 HTTP server listening on http://localhost:${server.port}`);
 
-	// Start gateway (channels)
+	// Start the Telegram gateway
 	await startGateway();
 	console.log("✓ Gateway service started\n");
 
-	// Show channel status
+	// Show Telegram channel status
 	const gateway = getGateway();
 	const channelStatus = gateway.getStatus();
-	console.log("Channels:");
+	console.log("Telegram:");
 	for (const [name, status] of Object.entries(channelStatus)) {
 		if (status.enabled) {
 			const running = status.running ? "✓" : "✗";

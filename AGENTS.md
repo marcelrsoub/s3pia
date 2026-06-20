@@ -1,6 +1,6 @@
 # S3pia Development Guide
 
-In this project we want to build a minimalist version of OpenClaw, a project that went viral and is available on GitHub. S3pia will be an autonomous AI agent that can run tasks in the background, has access to a folder inside a Docker container, and can execute any type of Bash script or task—create files, write files, execute these files—all inside the container. On top of that it has built‑in tools and built‑in channels used to talk to the user.
+In this project we want to build a minimalist version of OpenClaw, a project that went viral and is available on GitHub. S3pia will be an autonomous AI agent that can run tasks in the background, has access to a folder inside a Docker container, and can execute any type of Bash script or task—create files, write files, execute these files—all inside the container. On top of that it has built‑in tools and a Telegram channel used to talk to the user.
 
 We have Telegram, and tools such as writing files, reading files, patching, executing scripts, and sending the user a message. Another capability is skills: the model can create skills for itself—a recipe of what it can do or execute—so it can read straight from the file without needing to search the lab. Also, the agent has a system to schedule tasks.
 
@@ -150,7 +150,7 @@ The system uses a synchronous agent loop that executes tools directly (no backgr
 2. **Direct Tools** (`src/tools.ts`) - Tools execute in-process, no subprocess spawning
 3. **Skills System** (`src/skills.ts`) - Curated step-by-step recipes for common tasks
 4. **Heartbeat Scheduler** (`src/heartbeat.ts`) - Scheduled tasks with human-readable format
-5. **Channels** (`src/channels/`) - Web and Telegram input/output
+5. **Channels** (`src/channels/`) - Telegram input/output, plus the browser config UI
 
 See `docs/architecture.md` for full details.
 

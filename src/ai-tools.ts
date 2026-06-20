@@ -442,7 +442,6 @@ export const aiTools = {
 						"telegram",
 						"assistant",
 						message,
-						"telegram",
 						undefined,
 						undefined,
 						attachments.length > 0 ? attachments : undefined,
