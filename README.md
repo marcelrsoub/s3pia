@@ -84,7 +84,6 @@ Your data lives in a Docker volume:
 ├── IDENTITY.md       # Bot's identity (evolves over time)
 ├── USER.md           # Info about you
 ├── SOUL.md           # Bot's personality
-├── BOOTSTRAP.md     # Initial setup instructions
 ├── config/           # API keys and settings
 ├── memory/           # Long-term memory
 │   └── context.md

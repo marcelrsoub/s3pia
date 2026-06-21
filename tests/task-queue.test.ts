@@ -179,3 +179,80 @@ test("retries delivery without rerunning completed work", async () => {
 	expect(deliveries).toBeGreaterThanOrEqual(2);
 	await queue.close();
 });
+
+test("resumes the latest blocked task even when a newer queued task exists", async () => {
+	const dbPath = temporaryDatabase();
+	let executions = 0;
+	const seenInputs: string[] = [];
+	const queue = new TaskQueue(
+		dbPath,
+		async (input) => {
+			executions++;
+			seenInputs.push(input);
+			if (executions === 1) {
+				return {
+					task: input,
+					result: "Need the target filename.",
+					question: "Which file should I edit?",
+					blocked: true,
+					actions: [],
+					iterations: 1,
+					duration: 0,
+				};
+			}
+
+			return {
+				task: input,
+				result: "updated file-b.txt",
+				actions: [],
+				iterations: 1,
+				duration: 0,
+			};
+		},
+		async () => true,
+	);
+
+	const created = queue.enqueue({
+		kind: "telegram",
+		sourceKey: "telegram:blocked",
+		input: "Update the report",
+	});
+	queue.start();
+
+	await waitFor(
+		() => queue.getBySourceKey("telegram:blocked")?.status === "blocked",
+	);
+	queue.stop();
+
+	queue.enqueue({
+		kind: "telegram",
+		sourceKey: "telegram:newer",
+		input: "Handle a separate newer task",
+	});
+
+	expect(queue.getLatestActive()?.sourceKey).toBe("telegram:newer");
+	expect(queue.getLatestBlocked()?.sourceKey).toBe("telegram:blocked");
+
+	const resumed = queue.resumeBlockedTask(
+		queue.getLatestBlocked()?.id || created.task.id,
+		"Resume the current task using this answer:\nUse file-b.txt.",
+	);
+	expect(resumed?.id).toBe(created.task.id);
+	expect(resumed?.status).toBe("queued" satisfies TaskStatus);
+	queue.start();
+
+	await waitFor(
+		() => queue.getBySourceKey("telegram:blocked")?.status === "completed",
+	);
+	await waitFor(
+		() => queue.getBySourceKey("telegram:newer")?.status === "completed",
+	);
+
+	expect(executions).toBe(3);
+	expect(seenInputs).toEqual([
+		"Update the report",
+		"Resume the current task using this answer:\nUse file-b.txt.",
+		"Handle a separate newer task",
+	]);
+	await queue.close();
+});

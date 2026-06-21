@@ -11,4 +11,6 @@ test("includes a Docker runtime guardrail in the workspace context", async () =>
 	);
 	expect(context).toContain("Talk like a capable human, not a queue");
 	expect(context).toContain("Treat follow-ups during active work as updates");
+	expect(context).not.toContain("# Bootstrap: Waking Up");
+	expect(context).not.toContain("Use your tools to update the workspace files");
 });

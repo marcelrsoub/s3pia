@@ -214,6 +214,15 @@ export class TaskQueue {
 		return row ? this.mapRow(row) : null;
 	}
 
+	getLatestBlocked(): QueueTask | null {
+		const row = this.db
+			.query(
+				"SELECT * FROM agent_tasks WHERE status = 'blocked' ORDER BY updated_at DESC LIMIT 1",
+			)
+			.get() as TaskRow | null;
+		return row ? this.mapRow(row) : null;
+	}
+
 	getBacklogCount(): number {
 		const row = this.db
 			.query(
@@ -235,6 +244,37 @@ export class TaskQueue {
 		this.recordEvent(task.id, "retried");
 		if (this.started) void this.process();
 		return true;
+	}
+
+	resumeBlockedTask(
+		taskId: number,
+		input: string,
+		history?: Message[],
+	): QueueTask | null {
+		const existing = this.db
+			.query("SELECT * FROM agent_tasks WHERE id = ?")
+			.get(taskId) as TaskRow | null;
+		if (!existing || existing.status !== "blocked") {
+			return null;
+		}
+
+		const now = Date.now();
+		this.db.run(
+			`UPDATE agent_tasks
+			 SET input = ?, history = ?, status = 'queued', result = NULL, question = NULL, error = NULL, delivery_status = 'none', updated_at = ?
+			 WHERE id = ?`,
+			[
+				input,
+				JSON.stringify(
+					history || (JSON.parse(existing.history) as Message[]),
+				),
+				now,
+				taskId,
+			],
+		);
+		this.recordEvent(taskId, "resumed");
+		if (this.started) void this.process();
+		return this.getById(taskId);
 	}
 
 	private async process(): Promise<void> {
@@ -414,6 +454,13 @@ export class TaskQueue {
 			createdAt: row.created_at,
 			updatedAt: row.updated_at,
 		};
+	}
+
+	private getById(id: number): QueueTask | null {
+		const row = this.db
+			.query("SELECT * FROM agent_tasks WHERE id = ?")
+			.get(id) as TaskRow | null;
+		return row ? this.mapRow(row) : null;
 	}
 }
 

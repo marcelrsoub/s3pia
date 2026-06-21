@@ -260,12 +260,15 @@ export class TelegramChannel {
 
 		const queue = getTaskQueue();
 		const latestActive = queue.getLatestActive();
+		const blockedTask = queue.getLatestBlocked();
 		const backlogCount = queue.getBacklogCount();
-		const shouldAck = shouldSendQueuedAck({
-			content,
-			hasFileAttachment: content.includes("[FILE:"),
-			backlogCount,
-		});
+		const shouldAck =
+			Boolean(blockedTask) ||
+			shouldSendQueuedAck({
+				content,
+				hasFileAttachment: content.includes("[FILE:"),
+				backlogCount,
+			});
 		const attachmentKind = inferAttachmentKind(message);
 
 		const conversation =
@@ -283,6 +286,7 @@ export class TelegramChannel {
 		);
 
 		if (shouldAck) {
+			const receiptTaskContext = blockedTask || latestActive;
 			const receipt = await composeTelegramReceipt({
 				content,
 				hasFileAttachment: content.includes("[FILE:"),
@@ -290,16 +294,18 @@ export class TelegramChannel {
 				attachmentKind,
 				preferredLanguage,
 				activeTask:
-					latestActive &&
-					(latestActive.status === "queued" ||
-						latestActive.status === "running" ||
-						latestActive.status === "blocked")
+					receiptTaskContext &&
+					(receiptTaskContext.status === "queued" ||
+						receiptTaskContext.status === "running" ||
+						receiptTaskContext.status === "blocked")
 						? {
-								status: latestActive.status,
+								status: receiptTaskContext.status,
 								preview: summarizeTaskPreview(
-									latestActive.input || latestActive.result || "",
+									receiptTaskContext.input ||
+										receiptTaskContext.result ||
+										"",
 								),
-								question: latestActive.question,
+								question: receiptTaskContext.question,
 							}
 						: null,
 			});
@@ -315,12 +321,33 @@ export class TelegramChannel {
 			await this.sendRawMessage(message.chat.id, receipt.text);
 
 			if (receipt.shouldEnqueue && receipt.taskInput) {
-				queue.enqueue({
-					kind: "telegram",
-					sourceKey: `telegram:${this.botIdentity}:${update.update_id}`,
-					input: receipt.taskInput,
-					history,
-				});
+				const shouldResumeBlockedTask =
+					Boolean(blockedTask) &&
+					(receipt.intake.messageKind === "blocked_answer" ||
+						receipt.intake.messageKind === "task_update");
+
+				if (shouldResumeBlockedTask) {
+					const resumed = queue.resumeBlockedTask(
+						blockedTask.id,
+						receipt.taskInput,
+						history,
+					);
+					if (!resumed) {
+						queue.enqueue({
+							kind: "telegram",
+							sourceKey: `telegram:${this.botIdentity}:${update.update_id}`,
+							input: receipt.taskInput,
+							history,
+						});
+					}
+				} else {
+					queue.enqueue({
+						kind: "telegram",
+						sourceKey: `telegram:${this.botIdentity}:${update.update_id}`,
+						input: receipt.taskInput,
+						history,
+					});
+				}
 			}
 			return;
 		}
