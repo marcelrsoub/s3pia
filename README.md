@@ -81,6 +81,7 @@ Your data lives in a Docker volume:
 
 ```
 /app/ws/
+├── BOOTSTRAP.md     # Initial setup instructions
 ├── IDENTITY.md       # Bot's identity (evolves over time)
 ├── USER.md           # Info about you
 ├── SOUL.md           # Bot's personality

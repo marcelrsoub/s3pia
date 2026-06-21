@@ -19,11 +19,11 @@ if [ ! -f "/app/ws/IDENTITY.md" ]; then
     echo "→ Initializing workspace..."
     if [ "$(id -u)" = "0" ]; then
         cp -r /app/ws-template/* /app/ws/
-        rm -f /app/ws/BOOTSTRAP.md /app/ws/UX_CONTRACT.md
+        rm -f /app/ws/UX_CONTRACT.md
         chown -R 1000:1000 /app/ws 2>/dev/null || true
     else
         cp -r /app/ws-template/* /app/ws/
-        rm -f /app/ws/BOOTSTRAP.md /app/ws/UX_CONTRACT.md
+        rm -f /app/ws/UX_CONTRACT.md
     fi
     echo "  Workspace initialized."
 else
