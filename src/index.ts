@@ -30,6 +30,7 @@ const { getGateway, startGateway, stopGateway } = await import(
 	"./gateway/manager.js"
 );
 const { startHeartbeat, stopHeartbeat } = await import("./heartbeat.js");
+const { getOpenRouterModelRegistry } = await import("./openrouter.js");
 const { startServer } = await import("./server.js");
 const { startTaskQueue, stopTaskQueue } = await import("./task-queue.js");
 
@@ -49,12 +50,26 @@ console.log(" Logging system ready");
 console.log(" Environment variables loaded");
 
 // Check required env vars
-const requiredEnvVars = ["AI_PROVIDER", "AI_MODEL"];
+const requiredEnvVars = ["OPENROUTER_API_KEY", "AI_MODEL"];
 const missingVars = requiredEnvVars.filter((key) => !process.env[key]);
+const legacyProviderKeys = [
+	"AI_PROVIDER",
+	"ZAI_API_KEY",
+	"ANTHROPIC_API_KEY",
+	"OPENAI_API_KEY",
+	"DEEPSEEK_API_KEY",
+	"GROQ_API_KEY",
+	"GEMINI_API_KEY",
+];
+const legacyConfigured = legacyProviderKeys.filter((key) => process.env[key]);
 
 if (missingVars.length > 0) {
 	console.log("\n SETUP REQUIRED");
 	console.log(`   Missing: ${missingVars.join(", ")}`);
+	if (legacyConfigured.length > 0) {
+		console.log("   Direct providers are deprecated.");
+		console.log("   Configure OPENROUTER_API_KEY and AI_MODEL instead.");
+	}
 	console.log(`   Add to /app/ws/config/.env and restart`);
 } else {
 	console.log(" Configuration loaded");
@@ -68,6 +83,19 @@ async function startServices() {
 	startTaskQueue();
 	await startGateway();
 	console.log(" Gateway service started");
+
+	const registry = getOpenRouterModelRegistry();
+	registry.startAutoRefresh();
+	void registry
+		.refresh()
+		.then(() => {
+			console.log(
+				` OpenRouter metadata ready (${registry.getStatus().count} models cached)`,
+			);
+		})
+		.catch((err) => {
+			console.warn(" OpenRouter metadata unavailable:", err);
+		});
 
 	// Start heartbeat scheduler
 	await startHeartbeat();
@@ -93,6 +121,7 @@ startServices().catch((err) => {
 // Graceful shutdown
 const shutdown = async () => {
 	console.log("\n Shutting down...");
+	getOpenRouterModelRegistry().stopAutoRefresh();
 	await stopHeartbeat();
 	await stopGateway();
 	stopTaskQueue();

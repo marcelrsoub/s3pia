@@ -53,9 +53,9 @@ docker-compose --version
 All configuration is done via the `.env` file. Key settings:
 
 ```bash
-# Required: Choose an AI provider and set its key
-AI_PROVIDER=zai
-ZAI_API_KEY=your_key_here
+# Required: Configure OpenRouter
+OPENROUTER_API_KEY=your_key_here
+AI_MODEL=anthropic/claude-sonnet-4
 
 # Optional: Telegram bot
 TELEGRAM_BOT_TOKEN=your_bot_token

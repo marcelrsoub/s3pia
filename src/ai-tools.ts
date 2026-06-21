@@ -12,6 +12,7 @@ import { z } from "zod";
 import { getApiKey } from "./api-keys.js";
 import { conversationStore } from "./conversation.js";
 import { deleteEnvVar, getEnvSummary, getEnvVar, setEnvVar } from "./env.js";
+import { getCachedActiveModelBudget } from "./openrouter.js";
 import { clearWorkspaceContextCache } from "./prompts.js";
 import { getSkills } from "./skills.js";
 import {
@@ -22,6 +23,69 @@ import {
 import { workspacePath } from "./workspace.js";
 
 const WORKSPACE = workspacePath();
+
+async function getChunkCharacterBudget(): Promise<number> {
+	const budget = getCachedActiveModelBudget();
+	return Math.max(4_000, Math.min(24_000, budget.toolReserveTokens * 4));
+}
+
+interface ChunkedTextResult {
+	kind: "chunked_text";
+	label: string;
+	preview: string;
+	charsReturned: number;
+	totalChars: number;
+	truncated: boolean;
+	nextOffset: number | null;
+	offset: number;
+	remainingChars: number;
+	startLine?: number;
+	endLine?: number;
+	remainingLines?: number;
+	lineWindowApplied?: boolean;
+	message?: string;
+}
+
+function buildChunkedTextResult(
+	text: string,
+	maxChars: number,
+	options: {
+		label: string;
+		offset?: number;
+		totalLines?: number;
+		startLine?: number;
+		endLine?: number;
+		lineWindowApplied?: boolean;
+	},
+): ChunkedTextResult {
+	const offset = options.offset ?? 0;
+	const slice = text.slice(offset, offset + maxChars);
+	const nextOffset =
+		offset + slice.length < text.length ? offset + slice.length : null;
+
+	return {
+		kind: "chunked_text",
+		label: options.label,
+		preview: slice,
+		charsReturned: slice.length,
+		totalChars: text.length,
+		truncated: nextOffset !== null || offset > 0,
+		nextOffset,
+		offset,
+		remainingChars: Math.max(0, text.length - (offset + slice.length)),
+		startLine: options.startLine,
+		endLine: options.endLine,
+		remainingLines:
+			options.totalLines && options.endLine
+				? Math.max(0, options.totalLines - options.endLine)
+				: undefined,
+		lineWindowApplied: options.lineWindowApplied,
+		message:
+			nextOffset !== null || offset > 0
+				? `Content exceeded the current model budget. Read the next chunk with offset ${nextOffset ?? offset + slice.length}.`
+				: undefined,
+	};
+}
 
 // Tool definitions using AI SDK's tool() function
 export const aiTools = {
@@ -81,10 +145,34 @@ export const aiTools = {
 		description: "Read the contents of a file",
 		inputSchema: z.object({
 			path: z.string().describe("Absolute path to the file to read"),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe("Character offset for chunked reads"),
+			length: z
+				.number()
+				.int()
+				.min(1)
+				.max(50000)
+				.optional()
+				.describe("Maximum characters to return"),
+			startLine: z
+				.number()
+				.int()
+				.min(1)
+				.optional()
+				.describe("1-based starting line for a line-range read"),
+			endLine: z
+				.number()
+				.int()
+				.min(1)
+				.optional()
+				.describe("1-based ending line for a line-range read"),
 		}),
-		execute: async ({ path }) => {
+		execute: async ({ path, offset = 0, length, startLine, endLine }) => {
 			console.log(`[read_file] Reading: ${path}`);
-			const MAX_CONTENT = 20000; // characters
 			try {
 				const normalizedPath = normalizeWorkspaceFilePath(path);
 				if (!normalizedPath) {
@@ -97,11 +185,29 @@ export const aiTools = {
 					return `Error: File not found: ${normalizedPath}`;
 				}
 				const text = await file.text();
-				if (text.length > MAX_CONTENT) {
-					console.log(`[read_file] Truncated ${text.length} to ${MAX_CONTENT}`);
-					return `${text.slice(0, MAX_CONTENT)}\n\n[File truncated due to size]`;
+				const maxChars = length ?? (await getChunkCharacterBudget());
+
+				if (startLine || endLine) {
+					const lines = text.split("\n");
+					const safeStartLine = Math.max(1, startLine ?? 1);
+					const safeEndLine = Math.max(safeStartLine, endLine ?? lines.length);
+					const lineSlice = lines
+						.slice(safeStartLine - 1, safeEndLine)
+						.join("\n");
+					return buildChunkedTextResult(lineSlice, maxChars, {
+						label: normalizedPath,
+						offset,
+						startLine: safeStartLine,
+						endLine: safeEndLine,
+						totalLines: lines.length,
+						lineWindowApplied: true,
+					});
 				}
-				return text;
+
+				return buildChunkedTextResult(text, maxChars, {
+					label: normalizedPath,
+					offset,
+				});
 			} catch (err) {
 				return `Error: ${err instanceof Error ? err.message : "Unknown error"}`;
 			}
@@ -222,10 +328,15 @@ export const aiTools = {
 		description: "Execute a shell command in the workspace directory",
 		inputSchema: z.object({
 			command: z.string().describe("The shell command to execute"),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe("Character offset for chunked reads of command output"),
 		}),
-		execute: async ({ command }) => {
+		execute: async ({ command, offset = 0 }) => {
 			console.log(`[exec] Running: ${command}`);
-			const MAX_OUTPUT = 15000; // characters
 			const TIMEOUT_MS = 140 * 1000; // 2 minutes 20 seconds
 
 			try {
@@ -246,16 +357,15 @@ export const aiTools = {
 
 				clearTimeout(timeoutId);
 
-				let output =
+				const output =
 					exitCode !== 0
 						? `Error (exit ${exitCode}): ${stderr || stdout}`
 						: stdout || stderr || "Command completed successfully";
 
-				if (output.length > MAX_OUTPUT) {
-					console.log(`[exec] Truncated ${output.length} to ${MAX_OUTPUT}`);
-					output = `${output.slice(0, MAX_OUTPUT)}\n\n[Output truncated due to size]`;
-				}
-				return output;
+				return buildChunkedTextResult(output, await getChunkCharacterBudget(), {
+					label: `exec:${command}`,
+					offset,
+				});
 			} catch (err) {
 				if (
 					err instanceof Error &&
@@ -277,10 +387,15 @@ export const aiTools = {
 				.boolean()
 				.optional()
 				.describe("Extract text only, stripping HTML (default: true)"),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe("Character offset for chunked reads of fetched content"),
 		}),
-		execute: async ({ url, textOnly = true }) => {
+		execute: async ({ url, textOnly = true, offset = 0 }) => {
 			console.log(`[web_fetch] Fetching: ${url} (textOnly: ${textOnly})`);
-			const MAX_CONTENT = 15000; // characters (~4k tokens)
 			try {
 				const response = await fetch(url, {
 					headers: { "User-Agent": "Mozilla/5.0 (compatible; SepiaBot/1.0)" },
@@ -309,11 +424,10 @@ export const aiTools = {
 					text = text.replace(/\s+/g, " ").trim();
 				}
 
-				if (text.length > MAX_CONTENT) {
-					console.log(`[web_fetch] Truncated ${text.length} to ${MAX_CONTENT}`);
-					return `${text.slice(0, MAX_CONTENT)}\n\n[Content truncated due to size]`;
-				}
-				return text;
+				return buildChunkedTextResult(text, await getChunkCharacterBudget(), {
+					label: url,
+					offset,
+				});
 			} catch (err) {
 				return `Error: ${err instanceof Error ? err.message : "Unknown error"}`;
 			}
@@ -477,13 +591,18 @@ export const aiTools = {
 				.string()
 				.optional()
 				.describe("Session name for isolated browser instance"),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe("Character offset for chunked reads of browser output"),
 		}),
-		execute: async ({ command, session }) => {
+		execute: async ({ command, session, offset = 0 }) => {
 			if (!command) {
 				return "Error: command parameter is required. Provide a browser command like 'open https://example.com' or 'snapshot -i'.";
 			}
 			console.log(`[browser] Running: ${command}`);
-			const MAX_OUTPUT = 15000;
 			try {
 				let fullCommand = "agent-browser";
 				if (session) {
@@ -507,16 +626,15 @@ export const aiTools = {
 				stdout = stdout.replace(ansiPattern, "");
 				stderr = stderr.replace(ansiPattern, "");
 
-				let output =
+				const output =
 					exitCode !== 0
 						? `Browser error: ${stderr || stdout}`
 						: stdout || stderr || "OK";
 
-				if (output.length > MAX_OUTPUT) {
-					console.log(`[browser] Truncated ${output.length} to ${MAX_OUTPUT}`);
-					output = `${output.slice(0, MAX_OUTPUT)}\n\n[Output truncated]`;
-				}
-				return output;
+				return buildChunkedTextResult(output, await getChunkCharacterBudget(), {
+					label: `browser:${command}`,
+					offset,
+				});
 			} catch (err) {
 				return `Error: ${err instanceof Error ? err.message : "Unknown error"}`;
 			}

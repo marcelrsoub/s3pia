@@ -41,19 +41,22 @@ If S3pia is already installed, the installer detects the existing container. Cho
 ## Requirements
 
 - [Docker](https://docs.docker.com/get-docker/)
-- An API key from any supported provider
+- An OpenRouter API key
 
-## AI Providers
+## AI Backend
 
-| Provider | Get Key |
-|----------|---------|
-| Z.AI | [z.ai/subscribe](https://z.ai/subscribe) |
+S3pia now uses OpenRouter as its only supported LLM backend.
+
+| Service | Get Key |
+|---------|---------|
 | OpenRouter | [openrouter.ai](https://openrouter.ai) |
-| Anthropic | [console.anthropic.com](https://console.anthropic.com) |
-| OpenAI | [platform.openai.com](https://platform.openai.com) |
-| DeepSeek | [platform.deepseek.com](https://platform.deepseek.com) |
-| Groq | [console.groq.com](https://console.groq.com) |
-| Gemini | [ai.google.dev](https://ai.google.dev) |
+
+Set these values in `/app/ws/config/.env`:
+
+```bash
+OPENROUTER_API_KEY=your_key_here
+AI_MODEL=anthropic/claude-sonnet-4
+```
 
 ## How It Works
 

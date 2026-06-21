@@ -16,10 +16,7 @@ import {
 	validateEnv,
 } from "../env.js";
 import { getGateway } from "../gateway/manager.js";
-import {
-	getAllProviderNames,
-	getProviderByName,
-} from "../providers/registry.js";
+import { getActiveModelMetadata } from "../openrouter.js";
 
 /**
  * Agent command - interact with the agent directly
@@ -60,21 +57,21 @@ export async function statusCommand(): Promise<void> {
 	}
 	console.log("");
 
-	// Provider status
-	const aiProvider = getEnvVar("AI_PROVIDER") || "zai";
+	// AI status
 	const aiModel = getEnvVar("AI_MODEL") || "unknown";
-	console.log("AI Provider:");
-	console.log(`  Provider: ${aiProvider}`);
+	console.log("AI Backend:");
+	console.log("  Provider: openrouter");
 	console.log(`  Model: ${aiModel}`);
-
-	const provider = getProviderByName(aiProvider);
-	if (provider) {
-		console.log(`  Base URL: ${provider.baseURL}`);
+	console.log("  Base URL: https://openrouter.ai/api/v1");
+	const metadata = await getActiveModelMetadata();
+	if (metadata) {
+		console.log(
+			`  Context: ${Math.min(metadata.contextLength, metadata.providerContextLength).toLocaleString()} tokens`,
+		);
+		console.log(
+			`  Max completion: ${metadata.maxCompletionTokens.toLocaleString()} tokens`,
+		);
 	}
-	console.log("");
-
-	// Available providers
-	console.log(`Available Providers: ${getAllProviderNames().join(", ")}`);
 	console.log("");
 
 	// Gateway status (if running)
@@ -257,7 +254,7 @@ Commands:
 Examples:
   bun run src/cli/index.ts agent "What is 2+2?"
   bun run src/cli/index.ts status
-  bun run src/cli/index.ts config get AI_PROVIDER
+  bun run src/cli/index.ts config get AI_MODEL
   bun run src/cli/index.ts gateway start
 `);
 	}

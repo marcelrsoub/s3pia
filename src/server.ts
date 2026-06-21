@@ -7,10 +7,11 @@ import {
 	handleGetConfig,
 	handleGetEnv,
 	handleHealth,
+	handleOpenRouterModels,
 	handleTelegramBotRestart,
 	handleTelegramBotStatus,
 	handleTestConfig,
-	handleTestZAIKey,
+	handleTestOpenRouterKey,
 	handleUpdateConfig,
 	handleUpdateEnv,
 	handleValidateConfig,
@@ -132,8 +133,11 @@ export function startServer() {
 			if (url.pathname === "/api/config/validate" && req.method === "POST") {
 				return handleValidateConfig();
 			}
-			if (url.pathname === "/api/config/test/zai" && req.method === "POST") {
-				return handleTestZAIKey(req);
+			if (
+				url.pathname === "/api/config/test/openrouter" &&
+				req.method === "POST"
+			) {
+				return handleTestOpenRouterKey(req);
 			}
 			if (url.pathname === "/api/config/test" && req.method === "POST") {
 				return handleTestConfig(req);
@@ -146,6 +150,9 @@ export function startServer() {
 			}
 			if (url.pathname === "/api/ai/status" && req.method === "GET") {
 				return handleAIStatus();
+			}
+			if (url.pathname === "/api/ai/models" && req.method === "GET") {
+				return handleOpenRouterModels();
 			}
 			if (url.pathname === "/api/telegram/status" && req.method === "GET") {
 				return handleTelegramBotStatus();

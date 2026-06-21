@@ -1,15 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 
-// AI provider types
-export type AIProvider =
-	| "zai"
-	| "openrouter"
-	| "anthropic"
-	| "openai"
-	| "deepseek"
-	| "groq"
-	| "gemini";
-
 // Types matching the backend API
 export interface SystemStatus {
 	configured: boolean;
@@ -199,11 +189,11 @@ export function useConfig() {
 		[],
 	);
 
-	// Test Z.AI API key
-	const testZAIKey = useCallback(
+	// Test OpenRouter API key
+	const testOpenRouterKey = useCallback(
 		async (apiKey: string): Promise<TestKeyResult> => {
 			try {
-				const response = await fetch(`${API_BASE}/test/zai`, {
+				const response = await fetch(`${API_BASE}/test/openrouter`, {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ apiKey }),
@@ -219,7 +209,7 @@ export function useConfig() {
 				const data = (await response.json()) as TestKeyResult;
 				return data;
 			} catch (err) {
-				console.error("[useConfig] testZAIKey error:", err);
+				console.error("[useConfig] testOpenRouterKey error:", err);
 				return {
 					valid: false,
 					message: err instanceof Error ? err.message : "Test failed",
@@ -251,6 +241,6 @@ export function useConfig() {
 		fetchSettings,
 		saveSettings,
 		validateConfig,
-		testZAIKey,
+		testOpenRouterKey,
 	};
 }

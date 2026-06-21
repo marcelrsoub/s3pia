@@ -13,16 +13,21 @@ const ENV_FILE = workspacePath("config", ".env");
 // Track which keys are secrets (never expose in prompts)
 const SECRET_KEYS = new Set([
 	"TELEGRAM_BOT_TOKEN",
-	"ZAI_API_KEY",
 	"OPENROUTER_API_KEY",
-	"ANTHROPIC_API_KEY",
-	"OPENAI_API_KEY",
-	"GROQ_API_KEY",
-	"GEMINI_API_KEY",
 	"TAVILY_API_KEY",
 	"FAL_AI_API_KEY",
 	// Keys ending in _API_KEY or _TOKEN are treated as secret
 ]);
+
+const LEGACY_PROVIDER_KEYS = [
+	"AI_PROVIDER",
+	"ZAI_API_KEY",
+	"ANTHROPIC_API_KEY",
+	"OPENAI_API_KEY",
+	"DEEPSEEK_API_KEY",
+	"GROQ_API_KEY",
+	"GEMINI_API_KEY",
+] as const;
 
 /**
  * Check if a key is a secret
@@ -644,12 +649,12 @@ export async function getEnvFileContent(): Promise<string> {
 
 /**
  * Check if required environment variables are configured
- * Required: AI_PROVIDER, AI_MODEL
+ * Required: OPENROUTER_API_KEY, AI_MODEL
  */
 export function isEnvConfigured(): boolean {
-	const provider = process.env.AI_PROVIDER;
+	const openrouterKey = process.env.OPENROUTER_API_KEY;
 	const model = process.env.AI_MODEL;
-	return !!provider && !!model;
+	return !!openrouterKey && !!model;
 }
 
 /**
@@ -660,18 +665,31 @@ export function getEnvStatus(): {
 	configured: boolean;
 	missingRequired: string[];
 	canStart: boolean;
+	legacyDetected: string[];
+	migrationMessage?: string;
 } {
-	const provider = process.env.AI_PROVIDER;
+	const openrouterKey = process.env.OPENROUTER_API_KEY;
 	const model = process.env.AI_MODEL;
 	const missingRequired: string[] = [];
+	const legacyDetected = LEGACY_PROVIDER_KEYS.filter((key) => {
+		const value = process.env[key];
+		return Boolean(value && value.trim() !== "");
+	});
 
-	if (!provider) missingRequired.push("AI_PROVIDER");
+	if (!openrouterKey) missingRequired.push("OPENROUTER_API_KEY");
 	if (!model) missingRequired.push("AI_MODEL");
+
+	const migrationMessage =
+		legacyDetected.length > 0 && missingRequired.length > 0
+			? "Direct providers are deprecated. Configure OPENROUTER_API_KEY and AI_MODEL."
+			: undefined;
 
 	return {
 		configured: missingRequired.length === 0,
 		missingRequired,
 		canStart: missingRequired.length === 0,
+		legacyDetected,
+		migrationMessage,
 	};
 }
 
@@ -686,6 +704,9 @@ export function validateEnv(): { valid: boolean; errors: string[] } {
 		errors.push(
 			`Missing required settings: ${status.missingRequired.join(", ")}`,
 		);
+	}
+	if (status.migrationMessage) {
+		errors.push(status.migrationMessage);
 	}
 
 	return { valid: errors.length === 0, errors };
@@ -747,32 +768,19 @@ export function getEnvSchema(): Record<
 		],
 		ai: [
 			{
-				key: "AI_PROVIDER",
-				label: "AI Provider",
-				description: "Select AI provider (zai or openrouter)",
-				required: true,
-				isSecret: false,
-				defaultValue: "zai",
-			},
-			{
 				key: "AI_MODEL",
 				label: "AI Model",
-				description: "The model identifier",
+				description:
+					"OpenRouter model identifier, e.g. anthropic/claude-sonnet-4",
 				required: true,
 				isSecret: false,
-			},
-			{
-				key: "ZAI_API_KEY",
-				label: "Z.AI API Key",
-				description: "Your Z.AI API key",
-				required: true,
-				isSecret: true,
+				placeholder: "anthropic/claude-sonnet-4",
 			},
 			{
 				key: "OPENROUTER_API_KEY",
 				label: "OpenRouter API Key",
 				description: "Your OpenRouter API key",
-				required: false,
+				required: true,
 				isSecret: true,
 			},
 			{

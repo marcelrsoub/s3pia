@@ -60,6 +60,13 @@ type EnvEditorProps = {
 	inline?: boolean;
 };
 
+type OpenRouterModelSuggestion = {
+	id: string;
+	name: string;
+	contextLength: number;
+	maxCompletionTokens: number;
+};
+
 export function EnvEditor({
 	open = false,
 	onOpenChange,
@@ -72,6 +79,7 @@ export function EnvEditor({
 		success?: boolean;
 		message?: string;
 	} | null>(null);
+	const [models, setModels] = useState<OpenRouterModelSuggestion[]>([]);
 
 	// Load current .env file when dialog opens
 	useEffect(() => {
@@ -101,6 +109,25 @@ export function EnvEditor({
 		};
 
 		loadEnv();
+	}, [inline, open]);
+
+	useEffect(() => {
+		if (!inline && !open) return;
+
+		const loadModels = async () => {
+			try {
+				const response = await fetch("/api/ai/models");
+				if (!response.ok) return;
+				const payload = (await response.json()) as {
+					models?: OpenRouterModelSuggestion[];
+				};
+				setModels(payload.models?.slice(0, 12) ?? []);
+			} catch {
+				// Non-fatal for the editor
+			}
+		};
+
+		loadModels();
 	}, [inline, open]);
 
 	const handleSave = async () => {
@@ -183,11 +210,37 @@ export function EnvEditor({
 									<code className="text-xs">set_env_var</code> while processing
 									Telegram messages
 								</li>
+								<li>
+									Required AI settings are{" "}
+									<code className="text-xs">OPENROUTER_API_KEY</code> and{" "}
+									<code className="text-xs">AI_MODEL</code>
+								</li>
 							</ul>
 						</div>
 					</AccordionContent>
 				</AccordionItem>
 			</Accordion>
+
+			{models.length > 0 && (
+				<div className="rounded-lg border bg-muted/20 px-4 py-3 space-y-2">
+					<div className="text-sm font-medium">Suggested OpenRouter Models</div>
+					<div className="grid gap-2 sm:grid-cols-2">
+						{models.map((model) => (
+							<div
+								key={model.id}
+								className="rounded-md border bg-background px-3 py-2 text-xs"
+							>
+								<div className="font-medium">{model.id}</div>
+								<div className="text-muted-foreground">{model.name}</div>
+								<div className="text-muted-foreground">
+									Context {model.contextLength.toLocaleString()} • Max output{" "}
+									{model.maxCompletionTokens.toLocaleString()}
+								</div>
+							</div>
+						))}
+					</div>
+				</div>
+			)}
 
 			<div className="relative border rounded-md bg-[#1e1e1e] overflow-auto">
 				<Editor

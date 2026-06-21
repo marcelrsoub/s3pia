@@ -18,6 +18,7 @@ import { getEnvSummary } from "./env.js";
 import type { Action, ExecutionResult } from "./memory.js";
 import { getMemory } from "./memory.js";
 import { createConfiguredLanguageModel } from "./model.js";
+import { estimateTokens, getActiveModelBudget } from "./openrouter.js";
 import { loadWorkspaceContext } from "./prompts.js";
 import { getSkills } from "./skills.js";
 
@@ -111,6 +112,73 @@ export interface AgentConfig {
 	conversationHistory?: Message[];
 }
 
+interface PromptMessage {
+	role: "user" | "assistant";
+	content: string;
+}
+
+export function compactText(text: string, maxChars: number): string {
+	if (text.length <= maxChars) return text;
+	const headLength = Math.max(0, Math.floor(maxChars * 0.65));
+	const tailLength = Math.max(0, maxChars - headLength - 64);
+	const head = text.slice(0, headLength).trimEnd();
+	const tail = text
+		.slice(Math.max(headLength, text.length - tailLength))
+		.trimStart();
+	return `${head}\n\n[...omitted ${text.length - head.length - tail.length} chars...]\n\n${tail}`;
+}
+
+export function buildTaskSnapshot(messages: Message[]): string | null {
+	if (messages.length === 0) return null;
+	const recent = messages.slice(-12);
+	const lastUser = [...recent].reverse().find((msg) => msg.role === "user");
+	const assistantSummaries = recent
+		.filter((msg) => msg.role === "assistant")
+		.slice(-3)
+		.map((msg) => compactText(msg.content, 280));
+	const fileReferences = recent
+		.flatMap((msg) => msg.files?.map((file) => file.path) ?? [])
+		.slice(-5);
+
+	const lines = [
+		lastUser
+			? `Latest user context:\n${compactText(lastUser.content, 600)}`
+			: null,
+		assistantSummaries.length > 0
+			? `Recent assistant context:\n${assistantSummaries
+					.map((summary, index) => `${index + 1}. ${summary}`)
+					.join("\n")}`
+			: null,
+		fileReferences.length > 0
+			? `Referenced files:\n${fileReferences.map((path) => `- ${path}`).join("\n")}`
+			: null,
+	].filter(Boolean);
+
+	return lines.length > 0 ? lines.join("\n\n") : null;
+}
+
+export function takeMessagesWithinBudget(
+	messages: PromptMessage[],
+	tokenBudget: number,
+): { messages: PromptMessage[]; droppedCount: number } {
+	const selected: PromptMessage[] = [];
+	let usedTokens = 0;
+	let droppedCount = 0;
+
+	for (const message of messages) {
+		const cost = estimateTokens(message.content) + 16;
+		if (selected.length > 0 && usedTokens + cost > tokenBudget) {
+			droppedCount++;
+			continue;
+		}
+
+		selected.push(message);
+		usedTokens += cost;
+	}
+
+	return { messages: selected, droppedCount };
+}
+
 class Agent {
 	private config: Required<AgentConfig>;
 	private memory = getMemory();
@@ -134,26 +202,12 @@ class Agent {
 
 		const systemPrompt = await this.buildSystemPrompt();
 
-		const messages: Array<{ role: "user" | "assistant"; content: string }> = [];
-
-		if (conversationHistory && conversationHistory.length > 0) {
-			const recentMessages = conversationHistory
-				.filter((m) => m.role !== "system")
-				.slice(-6);
-			for (const msg of recentMessages) {
-				messages.push({
-					role: msg.role === "assistant" ? "assistant" : "user",
-					content: msg.content.slice(0, 500),
-				});
-			}
-		}
-
-		const lastMsg = messages[messages.length - 1];
-		if (lastMsg && lastMsg.role === "user") {
-			messages[messages.length - 1] = { role: "user", content: task };
-		} else {
-			messages.push({ role: "user", content: task });
-		}
+		const budget = await getActiveModelBudget();
+		const messages = this.buildPromptMessages(
+			task,
+			conversationHistory || [],
+			budget,
+		);
 
 		const abortController = new AbortController();
 		const timeoutId = setTimeout(
@@ -256,7 +310,7 @@ class Agent {
 					error: {
 						type: "api_error",
 						message: "Task timed out",
-						provider: process.env.AI_PROVIDER || "zai",
+						provider: "openrouter",
 					},
 				};
 
@@ -264,7 +318,7 @@ class Agent {
 				return timeoutResult;
 			}
 
-			const providerName = process.env.AI_PROVIDER || "zai";
+			const providerName = "openrouter";
 			const apiError = classifyApiError(err, providerName);
 
 			if (apiError) {
@@ -322,6 +376,9 @@ RULES:
 7. If information is unclear but nonessential, make a reasonable assumption and explain it
 8. Use skills in /app/ws/skills/ when appropriate - read them with read_file
 9. If the user specifies which tool(s) to use, respect that restriction strictly - do not switch to other tools
+10. For long outputs, work in phases: outline, notes, draft sections, assemble, verify, deliver
+11. Prefer writing large intermediate outputs to workspace files and resume from those files instead of keeping everything in one prompt
+12. If tool output is chunked, request the most relevant next chunk instead of assuming the missing content is irrelevant
 
 ---
 
@@ -367,6 +424,51 @@ ${history.map((h) => `- ${h.task.slice(0, 80)}... -> ${h.result?.slice(0, 80)}..
 
 	private getModel(): LanguageModel {
 		return createConfiguredLanguageModel();
+	}
+
+	private buildPromptMessages(
+		task: string,
+		conversationHistory: Message[],
+		budget: Awaited<ReturnType<typeof getActiveModelBudget>>,
+	): PromptMessage[] {
+		const prioritized: PromptMessage[] = [];
+		const snapshot = buildTaskSnapshot(conversationHistory);
+		const recentMessages = conversationHistory.filter(
+			(m) => m.role !== "system",
+		);
+
+		prioritized.push({
+			role: "user",
+			content: `Current task:\n${task}`,
+		});
+
+		if (snapshot) {
+			prioritized.push({
+				role: "assistant",
+				content: `Active task snapshot:\n${snapshot}`,
+			});
+		}
+
+		for (const msg of recentMessages.slice(-10).reverse()) {
+			const role = msg.role === "assistant" ? "assistant" : "user";
+			prioritized.push({
+				role,
+				content: compactText(msg.content, role === "assistant" ? 500 : 700),
+			});
+		}
+
+		const { messages, droppedCount } = takeMessagesWithinBudget(
+			prioritized,
+			Math.max(2_048, budget.usableInputTokens),
+		);
+
+		if (droppedCount > 0) {
+			console.warn(
+				`[Agent] Dropped ${droppedCount} low-priority context message(s) to fit prompt budget`,
+			);
+		}
+
+		return messages.reverse();
 	}
 }
 
