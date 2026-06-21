@@ -10,7 +10,11 @@ import { resolve } from "node:path";
 import { tool } from "ai";
 import { z } from "zod";
 import { getApiKey } from "./api-keys.js";
-import { conversationStore } from "./conversation.js";
+import {
+	conversationStore,
+	type Message,
+	TELEGRAM_CONVERSATION_ID,
+} from "./conversation.js";
 import { deleteEnvVar, getEnvSummary, getEnvVar, setEnvVar } from "./env.js";
 import { getCachedActiveModelBudget } from "./openrouter.js";
 import { clearWorkspaceContextCache } from "./prompts.js";
@@ -46,7 +50,30 @@ interface ChunkedTextResult {
 	message?: string;
 }
 
-function buildChunkedTextResult(
+export interface ThreadStateStore {
+	get(conversationId: string):
+		| {
+				metadata?: {
+					preferredLanguage?: string;
+					lastIntakeKind?: string;
+					lastIntakeNextStep?: string;
+					lastIntakeGoal?: string;
+					activeTaskId?: number;
+					activeTaskSourceKey?: string;
+					activeTaskStatus?: string;
+					activeTaskPreview?: string;
+					activeTaskQuestion?: string;
+					activeTaskStartedAt?: number;
+					activeTaskUpdatedAt?: number;
+				};
+				lastActivity: number;
+		  }
+		| undefined;
+	getRecentMessages(conversationId: string, limit: number): Message[];
+	getMessagesSince(conversationId: string, sinceTimestamp: number): Message[];
+}
+
+export function buildChunkedTextResult(
 	text: string,
 	maxChars: number,
 	options: {
@@ -84,6 +111,137 @@ function buildChunkedTextResult(
 			nextOffset !== null || offset > 0
 				? `Content exceeded the current model budget. Read the next chunk with offset ${nextOffset ?? offset + slice.length}.`
 				: undefined,
+	};
+}
+
+function compactThreadText(text: string, maxChars = 180): string {
+	const normalized = text.trim().replace(/\s+/g, " ");
+	if (normalized.length <= maxChars) return normalized;
+	return `${normalized.slice(0, maxChars - 1).trimEnd()}…`;
+}
+
+function summarizeThreadMessage(message: Message): ThreadStateMessage {
+	return {
+		role: message.role,
+		timestamp: message.timestamp,
+		source: message.source,
+		preview: compactThreadText(message.content),
+	};
+}
+
+interface ThreadStateMessage {
+	role: Message["role"];
+	timestamp: number;
+	source?: Message["source"];
+	preview: string;
+}
+
+interface ThreadStateSnapshot {
+	conversationId: string;
+	checkpointAt: number;
+	metadata: {
+		preferredLanguage?: string;
+		lastIntakeKind?: string;
+		lastIntakeNextStep?: string;
+		lastIntakeGoal?: string;
+		activeTaskId?: number;
+		activeTaskSourceKey?: string;
+		activeTaskStatus?: string;
+		activeTaskPreview?: string;
+		activeTaskQuestion?: string;
+		activeTaskStartedAt?: number;
+		activeTaskUpdatedAt?: number;
+	};
+	activeTask: {
+		id?: number;
+		sourceKey?: string;
+		status: string;
+		preview?: string;
+		question?: string;
+		startedAt?: number;
+		updatedAt?: number;
+	} | null;
+	recentMessages: ThreadStateMessage[];
+	newUserUpdates: number;
+	latestUserMessage: ThreadStateMessage | null;
+	summary: string;
+}
+
+export function buildThreadState(
+	conversationId = TELEGRAM_CONVERSATION_ID,
+	sinceTimestamp?: number,
+	limit = 8,
+	store: ThreadStateStore = conversationStore,
+): ThreadStateSnapshot {
+	const conversation = store.get(conversationId);
+	const metadata = conversation?.metadata || {};
+	const activeTaskStatus = metadata.activeTaskStatus;
+	const checkpointAt =
+		sinceTimestamp ??
+		metadata.activeTaskUpdatedAt ??
+		metadata.activeTaskStartedAt ??
+		conversation?.lastActivity ??
+		0;
+	const activeTask =
+		activeTaskStatus &&
+		["queued", "running", "blocked"].includes(activeTaskStatus)
+			? {
+					id: metadata.activeTaskId,
+					sourceKey: metadata.activeTaskSourceKey,
+					status: activeTaskStatus,
+					preview: metadata.activeTaskPreview,
+					question: metadata.activeTaskQuestion,
+					startedAt: metadata.activeTaskStartedAt,
+					updatedAt: metadata.activeTaskUpdatedAt,
+				}
+			: null;
+
+	const sourceMessages =
+		sinceTimestamp !== undefined
+			? store.getMessagesSince(conversationId, checkpointAt)
+			: store.getRecentMessages(conversationId, limit);
+	const recentMessages = sourceMessages
+		.slice(-Math.max(1, limit))
+		.map(summarizeThreadMessage);
+	const userMessages = recentMessages.filter(
+		(message) => message.role === "user",
+	);
+	const latestUserMessage = userMessages.at(-1) || null;
+	const newUserUpdates = userMessages.length;
+
+	const summaryParts = [
+		activeTask
+			? `Active task ${activeTask.status}: ${activeTask.preview || "unknown"}`
+			: "No active task.",
+		newUserUpdates > 0
+			? `Recent user updates: ${newUserUpdates}`
+			: "No recent user updates.",
+		latestUserMessage
+			? `Latest user message: ${latestUserMessage.preview}`
+			: null,
+	].filter(Boolean);
+
+	return {
+		conversationId,
+		checkpointAt,
+		metadata: {
+			preferredLanguage: metadata.preferredLanguage,
+			lastIntakeKind: metadata.lastIntakeKind,
+			lastIntakeNextStep: metadata.lastIntakeNextStep,
+			lastIntakeGoal: metadata.lastIntakeGoal,
+			activeTaskId: metadata.activeTaskId,
+			activeTaskSourceKey: metadata.activeTaskSourceKey,
+			activeTaskStatus: metadata.activeTaskStatus,
+			activeTaskPreview: metadata.activeTaskPreview,
+			activeTaskQuestion: metadata.activeTaskQuestion,
+			activeTaskStartedAt: metadata.activeTaskStartedAt,
+			activeTaskUpdatedAt: metadata.activeTaskUpdatedAt,
+		},
+		activeTask,
+		recentMessages,
+		newUserUpdates,
+		latestUserMessage,
+		summary: summaryParts.join(" "),
 	};
 }
 
@@ -473,6 +631,37 @@ export const aiTools = {
 		execute: async ({ key }) => {
 			const result = await deleteEnvVar(key);
 			return result.success ? `Deleted ${key}` : `Error: ${result.error}`;
+		},
+	}),
+
+	refresh_thread: tool({
+		description:
+			"Refresh the live conversation thread state so long-running work can see recent user updates without replaying the full chat history.",
+		inputSchema: z.object({
+			conversationId: z
+				.string()
+				.optional()
+				.describe("Conversation id (default: telegram)"),
+			sinceTimestamp: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe("Only include messages newer than this timestamp"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(20)
+				.optional()
+				.describe("Maximum number of recent messages to include"),
+		}),
+		execute: async ({ conversationId, sinceTimestamp, limit }) => {
+			return buildThreadState(
+				conversationId || TELEGRAM_CONVERSATION_ID,
+				sinceTimestamp,
+				limit,
+			);
 		},
 	}),
 

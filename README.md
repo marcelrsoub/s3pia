@@ -77,7 +77,7 @@ S3pia: Done! Updated your IDENTITY.md.
 
 ## File Structure
 
-Your data lives in a Docker volume:
+Your data lives in a Docker volume, and the repo's `ws/` folder is the seed template that gets copied into `/app/ws` on first start. The agent reads and writes the live `/app/ws` tree while it runs:
 
 ```
 /app/ws/
@@ -165,7 +165,7 @@ docker-compose exec s3pia sh  # Shell into container
 
 - [Deployment Guide](DEPLOY.md) — Deploy to NAS, VPS, or any Docker host
 - [Telegram Setup](docs/telegram.md) — Connect your Telegram bot
-- [Architecture](docs/architecture.md) — How the agent works
+- [Architecture](docs/architecture.md) — Developer-facing design compass for how we build S3pia
 - [Full Index](docs/INDEX.md) — All documentation
 
 ## License

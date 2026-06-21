@@ -137,10 +137,31 @@ function buildFallbackIntake(
 	fallbackText: string,
 ): TelegramReceiptIntake {
 	const activeTask = context.activeTask;
+	const normalizedContent = context.content.trim().toLowerCase();
+	const likelyTaskUpdate =
+		/\b(add|change|correct|edit|fix|include|replace|revise|update|use|write|attach|attach|file|document|pdf|png|html|instead|actually|another)\b/i.test(
+			normalizedContent,
+		);
+	const likelyStatusCheck =
+		/\b(hello|hi|hey|oi|ola|olá|hey there|you there|still there|checking in|any update|status|ping|tudo bem|tá tudo bem|are you there)\b/i.test(
+			normalizedContent,
+		) ||
+		normalizedContent.length <= 24 ||
+		/^[?.!?\s]+$/.test(normalizedContent);
+	const likelyBlockedAnswer =
+		activeTask?.status === "blocked" &&
+		/\b(yes|no|sim|não|nao|ok|okay|sure|right|correct|wrong|one|two|three)\b/i.test(
+			normalizedContent,
+		);
+
 	const defaultKind: TelegramMessageKind = activeTask
-		? activeTask.status === "blocked"
+		? likelyBlockedAnswer
 			? "blocked_answer"
-			: "task_update"
+			: likelyTaskUpdate
+				? "task_update"
+				: likelyStatusCheck
+					? "status_check"
+					: "task_update"
 		: "new_task";
 
 	return {
@@ -151,10 +172,14 @@ function buildFallbackIntake(
 		messageKind: defaultKind,
 		attachmentKind: context.attachmentKind,
 		understoodGoal: activeTask
-			? "I received your update for the current task."
+			? defaultKind === "status_check"
+				? "I received your check-in about the current task."
+				: "I received your update for the current task."
 			: "I received your message.",
 		nextStep: activeTask
-			? "I’ll apply it while the current work continues."
+			? defaultKind === "status_check"
+				? "I’ll keep working and send you the result when it is ready."
+				: "I’ll apply it while the current work continues."
 			: "I’ll review it and continue from there.",
 		reply: fallbackText,
 		missingInfo: null,
@@ -163,8 +188,21 @@ function buildFallbackIntake(
 
 export function shouldEnqueueReceiptIntake(
 	intake: TelegramReceiptIntake,
+	activeTask?: TelegramActiveTaskContext | null,
 ): boolean {
-	return intake.messageKind !== "status_check";
+	if (intake.messageKind === "status_check") {
+		return false;
+	}
+
+	if (
+		activeTask &&
+		(intake.messageKind === "task_update" ||
+			intake.messageKind === "blocked_answer")
+	) {
+		return false;
+	}
+
+	return true;
 }
 
 export function buildTaskInputFromReceipt(
@@ -172,10 +210,6 @@ export function buildTaskInputFromReceipt(
 	intake: TelegramReceiptIntake,
 	activeTask?: TelegramActiveTaskContext | null,
 ): string | null {
-	if (!shouldEnqueueReceiptIntake(intake)) {
-		return null;
-	}
-
 	if (intake.messageKind === "blocked_answer" && activeTask) {
 		return [
 			"The user is replying to a blocked task.",
@@ -193,6 +227,10 @@ export function buildTaskInputFromReceipt(
 			`Current task summary: ${activeTask.preview}`,
 			`Apply this user update while continuing the task:\n${content}`,
 		].join("\n\n");
+	}
+
+	if (intake.messageKind === "status_check") {
+		return null;
 	}
 
 	return content;
@@ -272,7 +310,7 @@ export async function composeTelegramReceipt(
 			text,
 			intake,
 			usedFallback: false,
-			shouldEnqueue: shouldEnqueueReceiptIntake(intake),
+			shouldEnqueue: shouldEnqueueReceiptIntake(intake, context.activeTask),
 			taskInput: buildTaskInputFromReceipt(
 				context.content,
 				intake,
@@ -287,7 +325,7 @@ export async function composeTelegramReceipt(
 			text: fallbackText,
 			intake,
 			usedFallback: true,
-			shouldEnqueue: shouldEnqueueReceiptIntake(intake),
+			shouldEnqueue: shouldEnqueueReceiptIntake(intake, context.activeTask),
 			taskInput: buildTaskInputFromReceipt(
 				context.content,
 				intake,

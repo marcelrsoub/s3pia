@@ -379,6 +379,7 @@ RULES:
 10. For long outputs, work in phases: outline, notes, draft sections, assemble, verify, deliver
 11. Prefer writing large intermediate outputs to workspace files and resume from those files instead of keeping everything in one prompt
 12. If tool output is chunked, request the most relevant next chunk instead of assuming the missing content is irrelevant
+13. Before sending a progress update or final response on a long task, call refresh_thread and re-read the live conversation for any new user updates
 
 ---
 

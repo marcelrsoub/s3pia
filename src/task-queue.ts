@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { Agent } from "./agent.js";
+import { buildThreadState } from "./ai-tools.js";
 import {
 	conversationStore,
 	type Message,
@@ -73,6 +74,38 @@ function hasSuccessfulAgentDelivery(result: ExecutionResult): boolean {
 		}
 		return action.result.messageDelivered === true;
 	});
+}
+
+function summarizeTaskPreview(text: string): string {
+	const normalized = text.trim().replace(/\s+/g, " ");
+	if (normalized.length <= 140) return normalized;
+	return `${normalized.slice(0, 137).trimEnd()}...`;
+}
+
+function messageKey(message: Message): string {
+	return [
+		message.role,
+		message.timestamp,
+		message.source || "",
+		message.workerType || "",
+		message.workerStatus || "",
+		message.content,
+		JSON.stringify(message.files || []),
+	].join("|");
+}
+
+function mergeMessageStreams(base: Message[], live: Message[]): Message[] {
+	const merged: Message[] = [];
+	const seen = new Set<string>();
+
+	for (const message of [...base, ...live]) {
+		const key = messageKey(message);
+		if (seen.has(key)) continue;
+		seen.add(key);
+		merged.push(message);
+	}
+
+	return merged;
 }
 
 export class TaskQueue {
@@ -187,6 +220,9 @@ export class TaskQueue {
 		const created = this.getBySourceKey(task.sourceKey);
 		if (!created) throw new Error("Failed to create queued task");
 		this.recordEvent(created.id, "queued");
+		if (task.kind === "telegram") {
+			this.syncTelegramThreadState(created, "queued");
+		}
 		if (this.started) void this.process();
 		return { task: created, created: true };
 	}
@@ -242,6 +278,9 @@ export class TaskQueue {
 			[Date.now(), sourceKey],
 		);
 		this.recordEvent(task.id, "retried");
+		if (task.kind === "telegram") {
+			this.syncTelegramThreadState(task, "queued");
+		}
 		if (this.started) void this.process();
 		return true;
 	}
@@ -250,6 +289,7 @@ export class TaskQueue {
 		taskId: number,
 		input: string,
 		history?: Message[],
+		checkpointAt: number = Date.now(),
 	): QueueTask | null {
 		const existing = this.db
 			.query("SELECT * FROM agent_tasks WHERE id = ?")
@@ -258,6 +298,10 @@ export class TaskQueue {
 			return null;
 		}
 
+		const existingHistory = JSON.parse(existing.history) as Message[];
+		const nextHistory = history
+			? mergeMessageStreams(existingHistory, history)
+			: existingHistory;
 		const now = Date.now();
 		this.db.run(
 			`UPDATE agent_tasks
@@ -265,16 +309,33 @@ export class TaskQueue {
 			 WHERE id = ?`,
 			[
 				input,
-				JSON.stringify(
-					history || (JSON.parse(existing.history) as Message[]),
-				),
+				JSON.stringify(nextHistory),
 				now,
 				taskId,
 			],
 		);
 		this.recordEvent(taskId, "resumed");
+
+		const updated = this.getById(taskId);
+		if (updated) {
+			this.syncTelegramThreadState(updated, "queued", undefined, checkpointAt);
+		}
 		if (this.started) void this.process();
-		return this.getById(taskId);
+		return updated;
+	}
+
+	continueTelegramTask(
+		sourceKey: string,
+		input: string,
+		history: Message[] = [],
+		checkpointAt?: number,
+	): QueueTask | null {
+		const task = this.getBySourceKey(sourceKey);
+		if (!task || task.kind !== "telegram" || task.status !== "blocked") {
+			return null;
+		}
+
+		return this.resumeBlockedTask(task.id, input, history, checkpointAt);
 	}
 
 	private async process(): Promise<void> {
@@ -290,6 +351,21 @@ export class TaskQueue {
 			if (!row) return;
 
 			const task = this.mapRow(row);
+			const threadState =
+				task.kind === "telegram"
+					? buildThreadState(TELEGRAM_CONVERSATION_ID, task.createdAt)
+					: null;
+			const executionHistory =
+				task.kind === "telegram"
+					? mergeMessageStreams(
+							task.history,
+							conversationStore.getMessagesForAI(TELEGRAM_CONVERSATION_ID),
+						)
+					: task.history;
+			const executionInput =
+				task.kind === "telegram" && threadState
+					? `${task.input}\n\nLive thread snapshot:\n${threadState.summary}`
+					: task.input;
 			this.db.run(
 				`UPDATE agent_tasks
 				 SET status = 'running', attempts = attempts + 1, updated_at = ?
@@ -297,9 +373,12 @@ export class TaskQueue {
 				[Date.now(), task.id],
 			);
 			this.recordEvent(task.id, "running");
+			if (task.kind === "telegram") {
+				this.syncTelegramThreadState(task, "running");
+			}
 
 			try {
-				const result = await this.executor(task.input, task.history);
+				const result = await this.executor(executionInput, executionHistory);
 				const deliveredByAgent = hasSuccessfulAgentDelivery(result);
 				const now = Date.now();
 
@@ -321,6 +400,9 @@ export class TaskQueue {
 						"blocked",
 						result.question || "More information required",
 					);
+					if (task.kind === "telegram") {
+						this.syncTelegramThreadState(task, "blocked", result);
+					}
 				} else if (result.incomplete || result.error) {
 					this.db.run(
 						`UPDATE agent_tasks
@@ -339,6 +421,9 @@ export class TaskQueue {
 						"failed",
 						result.error?.message || "Task did not complete",
 					);
+					if (task.kind === "telegram") {
+						this.syncTelegramThreadState(task, "failed", result);
+					}
 				} else {
 					this.db.run(
 						`UPDATE agent_tasks
@@ -352,6 +437,9 @@ export class TaskQueue {
 						],
 					);
 					this.recordEvent(task.id, "completed");
+					if (task.kind === "telegram") {
+						this.syncTelegramThreadState(task, "completed", result);
+					}
 				}
 			} catch (error) {
 				this.db.run(
@@ -369,6 +457,9 @@ export class TaskQueue {
 					"failed",
 					error instanceof Error ? error.message : "Unknown task error",
 				);
+				if (task.kind === "telegram") {
+					this.syncTelegramThreadState(task, "failed");
+				}
 			}
 
 			await this.retryPendingDeliveries();
@@ -436,6 +527,25 @@ export class TaskQueue {
 			 VALUES (?, ?, ?, ?)`,
 			[taskId, event, details || null, Date.now()],
 		);
+	}
+
+	private syncTelegramThreadState(
+		task: QueueTask,
+		status: TaskStatus,
+		result?: ExecutionResult,
+		checkpointAt: number = Date.now(),
+	): void {
+		const previewSource =
+			result?.result || task.result || task.question || task.input || "";
+		conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
+			activeTaskId: task.id,
+			activeTaskSourceKey: task.sourceKey,
+			activeTaskStatus: status,
+			activeTaskPreview: summarizeTaskPreview(previewSource),
+			activeTaskQuestion: task.question,
+			activeTaskStartedAt: task.createdAt,
+			activeTaskUpdatedAt: checkpointAt,
+		});
 	}
 
 	private mapRow(row: TaskRow): QueueTask {

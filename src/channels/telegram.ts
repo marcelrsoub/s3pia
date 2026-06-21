@@ -259,7 +259,6 @@ export class TelegramChannel {
 		if (existingTask) return;
 
 		const queue = getTaskQueue();
-		const latestActive = queue.getLatestActive();
 		const blockedTask = queue.getLatestBlocked();
 		const backlogCount = queue.getBacklogCount();
 		const shouldAck =
@@ -284,30 +283,44 @@ export class TelegramChannel {
 			content,
 			"telegram",
 		);
+		const liveHistory = conversationStore.getMessagesForAI(
+			TELEGRAM_CONVERSATION_ID,
+		);
+		const followUpTimestamp =
+			conversation.messages.at(-1)?.timestamp ?? Date.now();
+
+		if (blockedTask) {
+			conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
+				activeTaskId: blockedTask.id,
+				activeTaskSourceKey: blockedTask.sourceKey,
+				activeTaskStatus: blockedTask.status,
+				activeTaskPreview: summarizeTaskPreview(
+					blockedTask.input || blockedTask.result || "",
+				),
+				activeTaskQuestion: blockedTask.question,
+				activeTaskStartedAt: blockedTask.createdAt,
+				activeTaskUpdatedAt: followUpTimestamp,
+			});
+		}
 
 		if (shouldAck) {
-			const receiptTaskContext = blockedTask || latestActive;
+			const receiptTaskContext =
+				blockedTask && blockedTask.status === "blocked"
+					? {
+							status: blockedTask.status,
+							preview: summarizeTaskPreview(
+								blockedTask.input || blockedTask.result || "",
+							),
+							question: blockedTask.question,
+						}
+					: null;
 			const receipt = await composeTelegramReceipt({
 				content,
 				hasFileAttachment: content.includes("[FILE:"),
 				backlogCount,
 				attachmentKind,
 				preferredLanguage,
-				activeTask:
-					receiptTaskContext &&
-					(receiptTaskContext.status === "queued" ||
-						receiptTaskContext.status === "running" ||
-						receiptTaskContext.status === "blocked")
-						? {
-								status: receiptTaskContext.status,
-								preview: summarizeTaskPreview(
-									receiptTaskContext.input ||
-										receiptTaskContext.result ||
-										"",
-								),
-								question: receiptTaskContext.question,
-							}
-						: null,
+				activeTask: receiptTaskContext,
 			});
 			conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
 				preferredLanguage: receipt.intake.language,
@@ -320,34 +333,35 @@ export class TelegramChannel {
 			);
 			await this.sendRawMessage(message.chat.id, receipt.text);
 
-			if (receipt.shouldEnqueue && receipt.taskInput) {
-				const shouldResumeBlockedTask =
-					Boolean(blockedTask) &&
-					(receipt.intake.messageKind === "blocked_answer" ||
-						receipt.intake.messageKind === "task_update");
-
-				if (shouldResumeBlockedTask) {
-					const resumed = queue.resumeBlockedTask(
-						blockedTask.id,
-						receipt.taskInput,
-						history,
-					);
-					if (!resumed) {
-						queue.enqueue({
-							kind: "telegram",
-							sourceKey: `telegram:${this.botIdentity}:${update.update_id}`,
-							input: receipt.taskInput,
-							history,
-						});
-					}
-				} else {
+			if (
+				blockedTask &&
+				(receipt.intake.messageKind === "task_update" ||
+					receipt.intake.messageKind === "blocked_answer")
+			) {
+				const resumed = queue.resumeBlockedTask(
+					blockedTask.id,
+					receipt.taskInput || content,
+					liveHistory,
+					followUpTimestamp,
+				);
+				if (!resumed) {
 					queue.enqueue({
 						kind: "telegram",
 						sourceKey: `telegram:${this.botIdentity}:${update.update_id}`,
-						input: receipt.taskInput,
+						input: receipt.taskInput || content,
 						history,
 					});
 				}
+				return;
+			}
+
+			if (receipt.shouldEnqueue && receipt.taskInput) {
+				queue.enqueue({
+					kind: "telegram",
+					sourceKey: `telegram:${this.botIdentity}:${update.update_id}`,
+					input: receipt.taskInput,
+					history,
+				});
 			}
 			return;
 		}

@@ -28,7 +28,8 @@ const RUNTIME_UX_CONTRACT = `## UX_CONTRACT
 `;
 
 /**
- * Load repo-owned runtime instructions plus workspace identity context.
+ * Load workspace context files (BOOTSTRAP.md, IDENTITY.md, SOUL.md, USER.md, UX_CONTRACT.md).
+ * These are the agent-visible workspace seeds and mutable context.
  */
 export async function loadWorkspaceContext(): Promise<string> {
 	// Return cached value if available
@@ -36,8 +37,17 @@ export async function loadWorkspaceContext(): Promise<string> {
 		return cachedWorkspaceContext;
 	}
 
-	const contextParts: string[] = [RUNTIME_UX_CONTRACT];
+	const contextParts: string[] = [];
 
+	// Load files in order (BOOTSTRAP first for onboarding)
+	const bootstrapFile = Bun.file(`${WORKSPACE}/BOOTSTRAP.md`);
+	if (await bootstrapFile.exists()) {
+		const content = await bootstrapFile.text();
+		contextParts.push(`## BOOTSTRAP\n${content}`);
+		console.log("[Prompts] Loaded BOOTSTRAP.md");
+	}
+
+	// Then load identity and personality files
 	const contextFiles = ["IDENTITY.md", "SOUL.md", "USER.md"];
 
 	for (const fileName of contextFiles) {
@@ -54,6 +64,16 @@ export async function loadWorkspaceContext(): Promise<string> {
 		} catch (_err) {
 			// File doesn't exist or can't be read, skip
 		}
+	}
+
+	const uxContractFile = Bun.file(`${WORKSPACE}/UX_CONTRACT.md`);
+	if (await uxContractFile.exists()) {
+		const content = await uxContractFile.text();
+		contextParts.push(`## UX_CONTRACT\n${content}`);
+		console.log("[Prompts] Loaded workspace context: UX_CONTRACT.md");
+	} else {
+		contextParts.push(RUNTIME_UX_CONTRACT);
+		console.log("[Prompts] Loaded UX_CONTRACT fallback");
 	}
 
 	contextParts.push(

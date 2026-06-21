@@ -60,6 +60,34 @@ test("falls back to the generic ack pool when intake fails", async () => {
 	expect(result.intake.messageKind).toBe("new_task");
 });
 
+test("fallback treats brief follow-ups as status checks when work is active", async () => {
+	const result = await composeTelegramReceipt(
+		{
+			content: "Tudo bem por aí?",
+			hasFileAttachment: false,
+			backlogCount: 1,
+			attachmentKind: "none",
+			preferredLanguage: "pt",
+			activeTask: {
+				status: "running",
+				preview: "Generate a mobile PNG from the invitation HTML",
+			},
+		},
+		{
+			generateIntake: async () => {
+				throw new Error("timeout");
+			},
+			fallbackAck: async () => "Estou olhando isso agora.",
+		},
+	);
+
+	expect(result.usedFallback).toBe(true);
+	expect(result.intake.messageKind).toBe("status_check");
+	expect(result.shouldEnqueue).toBe(false);
+	expect(result.taskInput).toBeNull();
+	expect(result.text).toBe("Estou olhando isso agora.");
+});
+
 test("status checks do not enqueue follow-up work", () => {
 	const intake: TelegramReceiptIntake = {
 		language: "en",
@@ -71,11 +99,11 @@ test("status checks do not enqueue follow-up work", () => {
 		missingInfo: null,
 	};
 
-	expect(shouldEnqueueReceiptIntake(intake)).toBe(false);
+	expect(shouldEnqueueReceiptIntake(intake, null)).toBe(false);
 	expect(buildTaskInputFromReceipt("Did you read it?", intake, null)).toBeNull();
 });
 
-test("task updates are rewritten against the current active task", () => {
+test("task updates stay attached to the current active thread", () => {
 	const intake: TelegramReceiptIntake = {
 		language: "en",
 		messageKind: "task_update",
@@ -86,12 +114,73 @@ test("task updates are rewritten against the current active task", () => {
 		missingInfo: null,
 	};
 
+	expect(shouldEnqueueReceiptIntake(intake, {
+		status: "running",
+		preview: "Draft the report from file A",
+	})).toBe(false);
+
 	const taskInput = buildTaskInputFromReceipt("Actually use file B instead.", intake, {
 		status: "running",
 		preview: "Draft the report from file A",
 	});
 
-	expect(taskInput).toContain("follow-up update to the current task");
+	expect(taskInput).toContain("This is a follow-up update to the current task.");
+	expect(taskInput).toContain("Current task summary: Draft the report from file A");
 	expect(taskInput).toContain("Actually use file B instead.");
-	expect(taskInput).toContain("Draft the report from file A");
+});
+
+test("blocked answers build a resume prompt for the current task", () => {
+	const intake: TelegramReceiptIntake = {
+		language: "en",
+		messageKind: "blocked_answer",
+		attachmentKind: "none",
+		understoodGoal: "You want to answer the blocked question.",
+		nextStep: "I’ll resume the blocked task with your answer.",
+		reply: "Thanks, I’m resuming the task now.",
+		missingInfo: null,
+	};
+
+	expect(
+		shouldEnqueueReceiptIntake(intake, {
+			status: "blocked",
+			preview: "Draft the report from file A",
+			question: "Should I use file B instead?",
+		}),
+	).toBe(false);
+
+	const taskInput = buildTaskInputFromReceipt("Use file B instead.", intake, {
+		status: "blocked",
+		preview: "Draft the report from file A",
+		question: "Should I use file B instead?",
+	});
+
+	expect(taskInput).toContain("The user is replying to a blocked task.");
+	expect(taskInput).toContain("Blocked question: Should I use file B instead?");
+	expect(taskInput).toContain("Resume the current task using this answer:");
+	expect(taskInput).toContain("Use file B instead.");
+});
+
+test("clearly separate requests still enqueue while work is active", () => {
+	const intake: TelegramReceiptIntake = {
+		language: "en",
+		messageKind: "new_task",
+		attachmentKind: "none",
+		understoodGoal: "You want a separate new task.",
+		nextStep: "I’ll start it as a separate thread.",
+		reply: "Got it. I’ll handle that as a new task.",
+		missingInfo: null,
+	};
+
+	expect(
+		shouldEnqueueReceiptIntake(intake, {
+			status: "running",
+			preview: "Draft the report from file A",
+		}),
+	).toBe(true);
+	expect(
+		buildTaskInputFromReceipt("Start a different analysis.", intake, {
+			status: "running",
+			preview: "Draft the report from file A",
+		}),
+	).toBe("Start a different analysis.");
 });

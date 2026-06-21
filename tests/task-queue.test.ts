@@ -236,6 +236,14 @@ test("resumes the latest blocked task even when a newer queued task exists", asy
 	const resumed = queue.resumeBlockedTask(
 		queue.getLatestBlocked()?.id || created.task.id,
 		"Resume the current task using this answer:\nUse file-b.txt.",
+		[
+			{
+				role: "user",
+				content: "Resume the current task using this answer:\nUse file-b.txt.",
+				timestamp: Date.now(),
+				source: "telegram",
+			},
+		],
 	);
 	expect(resumed?.id).toBe(created.task.id);
 	expect(resumed?.status).toBe("queued" satisfies TaskStatus);
@@ -249,10 +257,85 @@ test("resumes the latest blocked task even when a newer queued task exists", asy
 	);
 
 	expect(executions).toBe(3);
-	expect(seenInputs).toEqual([
-		"Update the report",
+	expect(seenInputs).toHaveLength(3);
+	expect(seenInputs[0]).toContain("Update the report");
+	expect(seenInputs[0]).toContain("Live thread snapshot:");
+	expect(seenInputs[1]).toContain(
 		"Resume the current task using this answer:\nUse file-b.txt.",
-		"Handle a separate newer task",
-	]);
+	);
+	expect(seenInputs[1]).toContain("Live thread snapshot:");
+	expect(seenInputs[2]).toContain("Handle a separate newer task");
+	expect(seenInputs[2]).toContain("No active task. No recent user updates.");
+	await queue.close();
+});
+
+test("resumes blocked telegram tasks in place when a follow-up arrives", async () => {
+	const dbPath = temporaryDatabase();
+	let executions = 0;
+	const queue = new TaskQueue(
+		dbPath,
+		async (input) => {
+			executions++;
+			if (executions === 1) {
+				return {
+					task: input,
+					result: "Need more information",
+					actions: [],
+					iterations: 1,
+					duration: 0,
+					blocked: true,
+					question: "Should I use file B instead?",
+				};
+			}
+
+			return {
+				task: input,
+				result: `completed ${input}`,
+				actions: [],
+				iterations: 1,
+				duration: 0,
+			};
+		},
+		async () => true,
+	);
+
+	queue.enqueue({
+		kind: "telegram",
+		sourceKey: "telegram:blocked-resume",
+		input: "Draft the report from file A",
+	});
+	queue.start();
+
+	await waitFor(
+		() => queue.getBySourceKey("telegram:blocked-resume")?.status === "blocked",
+	);
+
+	const before = queue.getBySourceKey("telegram:blocked-resume");
+	expect(before).not.toBeNull();
+
+	const resumed = queue.continueTelegramTask(
+		"telegram:blocked-resume",
+		"This is the user answer: use file B instead.",
+		[
+			{
+				role: "user",
+				content: "This is the user answer: use file B instead.",
+				timestamp: Date.now(),
+				source: "telegram",
+			},
+		],
+	);
+
+	expect(resumed?.id).toBe(before?.id);
+	expect(resumed?.history.some((message) =>
+		message.content.includes("use file B instead"),
+	)).toBe(true);
+
+	await waitFor(
+		() => queue.getBySourceKey("telegram:blocked-resume")?.status === "completed",
+	);
+
+	expect(executions).toBe(2);
+	expect(queue.getBySourceKey("telegram:blocked-resume")?.id).toBe(before?.id);
 	await queue.close();
 });

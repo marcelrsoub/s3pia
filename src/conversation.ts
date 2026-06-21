@@ -15,6 +15,13 @@ export interface ConversationMetadata {
 	lastIntakeKind?: string;
 	lastIntakeNextStep?: string;
 	lastIntakeGoal?: string;
+	activeTaskId?: number;
+	activeTaskSourceKey?: string;
+	activeTaskStatus?: "queued" | "running" | "blocked" | "completed" | "failed";
+	activeTaskPreview?: string;
+	activeTaskQuestion?: string;
+	activeTaskStartedAt?: number;
+	activeTaskUpdatedAt?: number;
 }
 
 export interface Message {
@@ -204,6 +211,32 @@ class ConversationStore {
 
 	getMetadata(conversationId: string): ConversationMetadata {
 		return this.conversations.get(conversationId)?.metadata || {};
+	}
+
+	getRecentMessages(conversationId: string, limit = 8): Message[] {
+		const conv = this.conversations.get(conversationId);
+		if (!conv) return [];
+		return conv.messages.slice(-Math.max(0, limit));
+	}
+
+	getMessagesSince(conversationId: string, sinceTimestamp: number): Message[] {
+		const conv = this.conversations.get(conversationId);
+		if (!conv) return [];
+		return conv.messages.filter(
+			(message) => message.timestamp >= sinceTimestamp,
+		);
+	}
+
+	getLatestUserMessage(conversationId: string): Message | null {
+		const conv = this.conversations.get(conversationId);
+		if (!conv) return null;
+		for (let i = conv.messages.length - 1; i >= 0; i--) {
+			const message = conv.messages[i];
+			if (message?.role === "user") {
+				return message;
+			}
+		}
+		return null;
 	}
 
 	updateMetadata(
