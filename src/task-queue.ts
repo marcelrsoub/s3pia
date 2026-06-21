@@ -205,6 +205,15 @@ export class TaskQueue {
 		return row ? this.mapRow(row) : null;
 	}
 
+	getLatestActive(): QueueTask | null {
+		const row = this.db
+			.query(
+				"SELECT * FROM agent_tasks WHERE status IN ('queued', 'running', 'blocked') ORDER BY updated_at DESC LIMIT 1",
+			)
+			.get() as TaskRow | null;
+		return row ? this.mapRow(row) : null;
+	}
+
 	getBacklogCount(): number {
 		const row = this.db
 			.query(

@@ -11,11 +11,12 @@ import {
 } from "../conversation.js";
 import { getEnvVar } from "../env.js";
 import { getTaskQueue } from "../task-queue.js";
-import {
-	composeQueuedTelegramAck,
-	shouldSendQueuedAck,
-} from "../telegram-ack.js";
+import { shouldSendQueuedAck } from "../telegram-ack.js";
 import { sendTelegramMessageToAdmin } from "../telegram-client.js";
+import {
+	composeTelegramReceipt,
+	type TelegramAttachmentKind,
+} from "../telegram-receipt.js";
 import { workspacePath } from "../workspace.js";
 
 export interface TelegramChannelConfig {
@@ -52,6 +53,24 @@ function sanitizeTelegramFilename(filename: string): string {
 function getValidAdminId(): string | null {
 	const value = getEnvVar("ADMIN_TELEGRAM_ID");
 	return value && /^[1-9]\d*$/.test(value) ? value : null;
+}
+
+function inferAttachmentKind(
+	message: TelegramUpdate["message"],
+): TelegramAttachmentKind {
+	if (!message) return "none";
+	if (message.photo?.length) return "photo";
+	if (message.document) return "document";
+	if (message.video) return "video";
+	if (message.audio) return "audio";
+	if (message.voice) return "voice";
+	return "none";
+}
+
+function summarizeTaskPreview(taskInput: string): string {
+	const normalized = taskInput.trim().replace(/\s+/g, " ");
+	if (normalized.length <= 140) return normalized;
+	return `${normalized.slice(0, 137).trimEnd()}...`;
 }
 
 export class TelegramChannel {
@@ -240,17 +259,22 @@ export class TelegramChannel {
 		if (existingTask) return;
 
 		const queue = getTaskQueue();
+		const latestActive = queue.getLatestActive();
 		const backlogCount = queue.getBacklogCount();
 		const shouldAck = shouldSendQueuedAck({
 			content,
 			hasFileAttachment: content.includes("[FILE:"),
 			backlogCount,
 		});
+		const attachmentKind = inferAttachmentKind(message);
 
 		const conversation =
 			conversationStore.get(TELEGRAM_CONVERSATION_ID) ||
 			conversationStore.create(TELEGRAM_CONVERSATION_ID);
 		const history = [...conversation.messages];
+		const preferredLanguage =
+			conversationStore.getMetadata(TELEGRAM_CONVERSATION_ID)
+				.preferredLanguage || null;
 		conversationStore.addMessage(
 			TELEGRAM_CONVERSATION_ID,
 			"user",
@@ -258,21 +282,55 @@ export class TelegramChannel {
 			"telegram",
 		);
 
+		if (shouldAck) {
+			const receipt = await composeTelegramReceipt({
+				content,
+				hasFileAttachment: content.includes("[FILE:"),
+				backlogCount,
+				attachmentKind,
+				preferredLanguage,
+				activeTask:
+					latestActive &&
+					(latestActive.status === "queued" ||
+						latestActive.status === "running" ||
+						latestActive.status === "blocked")
+						? {
+								status: latestActive.status,
+								preview: summarizeTaskPreview(
+									latestActive.input || latestActive.result || "",
+								),
+								question: latestActive.question,
+							}
+						: null,
+			});
+			conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
+				preferredLanguage: receipt.intake.language,
+				lastIntakeKind: receipt.intake.messageKind,
+				lastIntakeNextStep: receipt.intake.nextStep,
+				lastIntakeGoal: receipt.intake.understoodGoal,
+			});
+			console.log(
+				`[Telegram] Early receipt sent (${receipt.usedFallback ? "fallback" : "contextual"}): ${receipt.intake.messageKind}`,
+			);
+			await this.sendRawMessage(message.chat.id, receipt.text);
+
+			if (receipt.shouldEnqueue && receipt.taskInput) {
+				queue.enqueue({
+					kind: "telegram",
+					sourceKey: `telegram:${this.botIdentity}:${update.update_id}`,
+					input: receipt.taskInput,
+					history,
+				});
+			}
+			return;
+		}
+
 		queue.enqueue({
 			kind: "telegram",
 			sourceKey: `telegram:${this.botIdentity}:${update.update_id}`,
 			input: content,
 			history,
 		});
-
-		if (shouldAck) {
-			const ack = await composeQueuedTelegramAck({
-				content,
-				hasFileAttachment: content.includes("[FILE:"),
-				backlogCount,
-			});
-			await this.sendRawMessage(message.chat.id, ack);
-		}
 	}
 
 	private async handleCommand(chatId: number, text: string): Promise<void> {

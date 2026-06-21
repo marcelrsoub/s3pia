@@ -9,4 +9,6 @@ test("includes a Docker runtime guardrail in the workspace context", async () =>
 	expect(context).toContain(
 		"cannot publish new host ports from inside the task",
 	);
+	expect(context).toContain("Talk like a capable human, not a queue");
+	expect(context).toContain("Treat follow-ups during active work as updates");
 });

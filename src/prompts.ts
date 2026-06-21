@@ -14,9 +14,22 @@ export function clearWorkspaceContextCache(): void {
 // Cache for workspace context files
 let cachedWorkspaceContext: string | null = null;
 
+const UX_CONTRACT_FALLBACK = `## UX_CONTRACT
+
+# UX Contract
+
+- Talk like a capable human, not a queue or ticket system.
+- Match the user's language and keep the tone warm, direct, and brief.
+- Give a tiny receipt first: what you received and what you will do next.
+- Treat follow-ups during active work as updates to the current task unless they are clearly separate.
+- Keep internals hidden; do not ask the user to check task tables, queues, or status dashboards.
+- For long work, use files, drafts, and checkpoints so the task can keep moving without a giant prompt.
+- If you are blocked, ask one clear question and stop.
+`;
+
 /**
- * Load workspace context files (IDENTITY.md, SOUL.md, USER.md, BOOTSTRAP.md)
- * These files define the bot's personality, who the user is, and other important context
+ * Load workspace context files (BOOTSTRAP.md, IDENTITY.md, SOUL.md, USER.md, UX_CONTRACT.md)
+ * These files define the bot's personality, who the user is, and other important context.
  */
 export async function loadWorkspaceContext(): Promise<string> {
 	// Return cached value if available
@@ -51,6 +64,16 @@ export async function loadWorkspaceContext(): Promise<string> {
 		} catch (_err) {
 			// File doesn't exist or can't be read, skip
 		}
+	}
+
+	const uxContractFile = Bun.file(`${WORKSPACE}/UX_CONTRACT.md`);
+	if (await uxContractFile.exists()) {
+		const content = await uxContractFile.text();
+		contextParts.push(`## UX_CONTRACT\n${content}`);
+		console.log("[Prompts] Loaded workspace context: UX_CONTRACT.md");
+	} else {
+		contextParts.push(UX_CONTRACT_FALLBACK);
+		console.log("[Prompts] Loaded UX_CONTRACT fallback");
 	}
 
 	contextParts.push(
