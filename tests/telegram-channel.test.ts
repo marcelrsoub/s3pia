@@ -134,25 +134,116 @@ test("routes an idle chat message into a live run instead of stopping at status"
 			return true;
 		};
 
-		await channelAny.processUpdate({
-			update_id: 1,
-			message: {
-				message_id: 1,
-				chat: { id: 123, type: "private" },
-				from: { id: 1, first_name: "Marcel" },
-				text: "what's up",
-			},
-		});
+	await channelAny.processUpdate({
+		update_id: 1,
+		message: {
+			message_id: 1,
+			chat: { id: 123, type: "private" },
+			from: { id: 1, first_name: "Marcel" },
+			text: "Please summarize these notes and give me a short action plan.",
+		},
+	});
 
 		expect(requests).toEqual([
 			{
 				conversationId: "telegram",
 				source: "telegram",
 				kind: "new_run",
-				preview: "what's up",
+				preview: "Please summarize these notes and give me a short action plan.",
 			},
 		]);
 		expect(replies).toHaveLength(0);
+	} finally {
+		globalScope.__s3piaLiveRunCoordinator = previousCoordinator;
+		if (previousAdminId === undefined) {
+			delete process.env.ADMIN_TELEGRAM_ID;
+		} else {
+			process.env.ADMIN_TELEGRAM_ID = previousAdminId;
+		}
+	}
+});
+
+test("replies to short idle status checks instead of staying silent", async () => {
+	const globalScope = globalThis as Record<string, unknown>;
+	const requests: Array<{
+		conversationId?: string;
+		source: string;
+		kind: string;
+		preview?: string;
+	}> = [];
+	const previousCoordinator = globalScope.__s3piaLiveRunCoordinator;
+	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;
+	process.env.ADMIN_TELEGRAM_ID = "1";
+
+	globalScope.__s3piaLiveRunCoordinator =
+		{
+			requestRun(request: {
+				conversationId?: string;
+				source: string;
+				kind: string;
+				preview?: string;
+			}) {
+				requests.push(request);
+			},
+			cancelActiveRun() {
+				return null;
+			},
+			getStatusSnapshot() {
+				return {
+					conversationId: "telegram",
+					status: "idle",
+					currentRun: null,
+					canCancel: false,
+					rerunRequested: false,
+				};
+			},
+		};
+
+	try {
+		const channel = new TelegramChannel({
+			enabled: true,
+			allowFrom: ["1"],
+			token: "test-token",
+		});
+		const channelAny = channel as unknown as {
+			processUpdate(update: {
+				update_id: number;
+				message?: {
+					message_id: number;
+					chat: { id: number; type: string };
+					from?: { id: number; first_name?: string; username?: string };
+					text?: string;
+					caption?: string;
+				};
+			}): Promise<void>;
+			sendRawMessage(chatId: number, text: string): Promise<boolean>;
+		};
+
+		const replies: string[] = [];
+		channelAny.sendRawMessage = async (_chatId: number, text: string) => {
+			replies.push(text);
+			return true;
+		};
+
+		await channelAny.processUpdate({
+			update_id: 2,
+			message: {
+				message_id: 2,
+				chat: { id: 123, type: "private" },
+				from: { id: 1, first_name: "Marcel" },
+				text: "Hi",
+			},
+		});
+
+		expect(replies[0]).toBe("I’m here. Send me what you want me to work on.");
+		expect(requests).toEqual([
+			{
+				conversationId: "telegram",
+				source: "telegram",
+				kind: "new_run",
+				preview: "Hi",
+			},
+		]);
 	} finally {
 		globalScope.__s3piaLiveRunCoordinator = previousCoordinator;
 		if (previousAdminId === undefined) {
