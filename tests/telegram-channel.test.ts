@@ -254,6 +254,95 @@ test("routes short idle messages straight to the agent", async () => {
 	}
 });
 
+test("sends an error reply when Telegram message processing fails", async () => {
+	const globalScope = globalThis as Record<string, unknown>;
+	const requests: Array<{
+		conversationId?: string;
+		source: string;
+		kind: string;
+		preview?: string;
+	}> = [];
+	const previousCoordinator = globalScope.__s3piaLiveRunCoordinator;
+	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;
+	process.env.ADMIN_TELEGRAM_ID = "1";
+
+	globalScope.__s3piaLiveRunCoordinator =
+		{
+			requestRun(request: {
+				conversationId?: string;
+				source: string;
+				kind: string;
+				preview?: string;
+			}) {
+				requests.push(request);
+			},
+			cancelActiveRun() {
+				return null;
+			},
+			getStatusSnapshot() {
+				return {
+					conversationId: "telegram",
+					status: "idle",
+					currentRun: null,
+					canCancel: false,
+					rerunRequested: false,
+				};
+			},
+		};
+
+	try {
+		const channel = new TelegramChannel({
+			enabled: true,
+			allowFrom: ["1"],
+			token: "test-token",
+		});
+		const channelAny = channel as unknown as {
+			processUpdate(update: {
+				update_id: number;
+				message?: {
+					message_id: number;
+					chat: { id: number; type: string };
+					from?: { id: number; first_name?: string; username?: string };
+					text?: string;
+					caption?: string;
+					document?: { file_id: string; file_name?: string };
+				};
+			}): Promise<void>;
+			sendRawMessage(chatId: number, text: string): Promise<boolean>;
+			downloadFile(fileId: string, filename: string): Promise<string>;
+		};
+
+		const replies: string[] = [];
+		channelAny.sendRawMessage = async (_chatId: number, text: string) => {
+			replies.push(text);
+			return true;
+		};
+		channelAny.downloadFile = async () => {
+			throw new Error("boom");
+		};
+
+		await channelAny.processUpdate({
+			update_id: 3,
+			message: {
+				message_id: 3,
+				chat: { id: 123, type: "private" },
+				from: { id: 1, first_name: "Marcel" },
+				document: { file_id: "doc-1", file_name: "notes.pdf" },
+			},
+		});
+
+		expect(requests).toHaveLength(0);
+		expect(replies[0]).toContain("error handling that message");
+	} finally {
+		globalScope.__s3piaLiveRunCoordinator = previousCoordinator;
+		if (previousAdminId === undefined) {
+			delete process.env.ADMIN_TELEGRAM_ID;
+		} else {
+			process.env.ADMIN_TELEGRAM_ID = previousAdminId;
+		}
+	}
+});
+
 test("aborts the active Telegram poll when stopping", async () => {
 	const previousFetch = globalThis.fetch;
 	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;

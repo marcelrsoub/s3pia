@@ -15,11 +15,9 @@ import {
 	getLiveRunCoordinator,
 	type LiveRunTriggerKind,
 } from "../live-run.js";
-import { shouldSendLiveAck } from "../telegram-ack.js";
 import { sendTelegramMessageToAdmin } from "../telegram-client.js";
 import {
 	classifyTelegramReceiptIntake,
-	composeTelegramReceipt,
 	type TelegramAttachmentKind,
 	type TelegramReceiptContext,
 } from "../telegram-receipt.js";
@@ -119,6 +117,9 @@ function buildStatusMessage() {
 		"\n",
 	);
 }
+
+const TELEGRAM_PROCESSING_ERROR_MESSAGE =
+	"I hit an error handling that message. Please try again.";
 
 function mapReceiptKindToTriggerKind(
 	messageKind: string,
@@ -296,126 +297,111 @@ export class TelegramChannel {
 			return;
 		}
 
-		const parts: string[] = [];
-		const text = message.text || message.caption || "";
-		if (text) {
-			parts.push(text);
-		}
+		try {
+			const parts: string[] = [];
+			const text = message.text || message.caption || "";
+			if (text) {
+				parts.push(text);
+			}
 
-		const timestamp = Date.now();
-		if (message.photo?.length) {
-			const lastPhoto = message.photo[message.photo.length - 1];
-			if (lastPhoto) {
+			const timestamp = Date.now();
+			if (message.photo?.length) {
+				const lastPhoto = message.photo[message.photo.length - 1];
+				if (lastPhoto) {
+					const savePath = await this.downloadFile(
+						lastPhoto.file_id,
+						`photo_${timestamp}.jpg`,
+					);
+					parts.push(`[FILE: ${savePath}]`);
+				}
+			} else if (message.document) {
 				const savePath = await this.downloadFile(
-					lastPhoto.file_id,
-					`photo_${timestamp}.jpg`,
+					message.document.file_id,
+					message.document.file_name || `file_${timestamp}`,
+				);
+				parts.push(`[FILE: ${savePath}]`);
+			} else if (message.video) {
+				const savePath = await this.downloadFile(
+					message.video.file_id,
+					message.video.file_name || `video_${timestamp}.mp4`,
+				);
+				parts.push(`[FILE: ${savePath}]`);
+			} else if (message.audio) {
+				const savePath = await this.downloadFile(
+					message.audio.file_id,
+					message.audio.file_name || `audio_${timestamp}.mp3`,
+				);
+				parts.push(`[FILE: ${savePath}]`);
+			} else if (message.voice) {
+				const savePath = await this.downloadFile(
+					message.voice.file_id,
+					`voice_${timestamp}.ogg`,
 				);
 				parts.push(`[FILE: ${savePath}]`);
 			}
-		} else if (message.document) {
-			const savePath = await this.downloadFile(
-				message.document.file_id,
-				message.document.file_name || `file_${timestamp}`,
+
+			const content = parts.join("\n").trim();
+			if (message.text?.startsWith("/")) {
+				await this.handleCommand(message.chat.id, message.text);
+				return;
+			}
+
+			const coordinator = getLiveRunCoordinator();
+			const liveSnapshot = coordinator.getStatusSnapshot(
+				TELEGRAM_CONVERSATION_ID,
 			);
-			parts.push(`[FILE: ${savePath}]`);
-		} else if (message.video) {
-			const savePath = await this.downloadFile(
-				message.video.file_id,
-				message.video.file_name || `video_${timestamp}.mp4`,
+			const currentRun = liveSnapshot.currentRun;
+			const hasFileAttachment = content.includes("[FILE:");
+			const attachmentKind = inferAttachmentKind(message);
+			const preferredLanguage =
+				conversationStore.getMetadata(TELEGRAM_CONVERSATION_ID)
+					.preferredLanguage || null;
+
+			conversationStore.addMessage(
+				TELEGRAM_CONVERSATION_ID,
+				"user",
+				content,
+				"telegram",
 			);
-			parts.push(`[FILE: ${savePath}]`);
-		} else if (message.audio) {
-			const savePath = await this.downloadFile(
-				message.audio.file_id,
-				message.audio.file_name || `audio_${timestamp}.mp3`,
-			);
-			parts.push(`[FILE: ${savePath}]`);
-		} else if (message.voice) {
-			const savePath = await this.downloadFile(
-				message.voice.file_id,
-				`voice_${timestamp}.ogg`,
-			);
-			parts.push(`[FILE: ${savePath}]`);
+
+			const receiptContext: TelegramReceiptContext = {
+				content,
+				hasFileAttachment,
+				isBusy: liveSnapshot.status !== "idle",
+				attachmentKind,
+				preferredLanguage,
+				activeRun:
+					currentRun && currentRun.status !== "idle"
+						? {
+								status: currentRun.status,
+								preview: currentRun.preview,
+								question: currentRun.question,
+							}
+						: null,
+			};
+
+			const intake = classifyTelegramReceiptIntake(receiptContext);
+
+			conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
+				preferredLanguage: intake.language,
+				lastIntakeKind: intake.messageKind,
+				lastIntakeNextStep: intake.nextStep,
+				lastIntakeGoal: intake.understoodGoal,
+			});
+
+			coordinator.requestRun({
+				conversationId: TELEGRAM_CONVERSATION_ID,
+				source: "telegram",
+				kind: mapReceiptKindToTriggerKind(
+					intake.messageKind,
+					liveSnapshot.status,
+				),
+				preview: summarizeLiveRunPreview(content),
+			});
+		} catch (err) {
+			console.error("[Telegram] Failed to process update:", err);
+			await this.sendRawMessage(message.chat.id, TELEGRAM_PROCESSING_ERROR_MESSAGE);
 		}
-
-		const content = parts.join("\n").trim();
-		if (message.text?.startsWith("/")) {
-			await this.handleCommand(message.chat.id, message.text);
-			return;
-		}
-
-		const coordinator = getLiveRunCoordinator();
-		const liveSnapshot = coordinator.getStatusSnapshot(
-			TELEGRAM_CONVERSATION_ID,
-		);
-		const currentRun = liveSnapshot.currentRun;
-		const hasFileAttachment = content.includes("[FILE:");
-		const attachmentKind = inferAttachmentKind(message);
-		const preferredLanguage =
-			conversationStore.getMetadata(TELEGRAM_CONVERSATION_ID)
-				.preferredLanguage || null;
-		const shouldAck = shouldSendLiveAck({
-			content,
-			hasFileAttachment,
-			isBusy: liveSnapshot.status !== "idle",
-		});
-
-		conversationStore.addMessage(
-			TELEGRAM_CONVERSATION_ID,
-			"user",
-			content,
-			"telegram",
-		);
-
-		const receiptContext: TelegramReceiptContext = {
-			content,
-			hasFileAttachment,
-			isBusy: liveSnapshot.status !== "idle",
-			attachmentKind,
-			preferredLanguage,
-			activeRun:
-				currentRun && currentRun.status !== "idle"
-					? {
-							status: currentRun.status,
-							preview: currentRun.preview,
-							question: currentRun.question,
-						}
-					: null,
-		};
-
-		const fallbackIntake = classifyTelegramReceiptIntake(receiptContext);
-		const receipt = shouldAck
-			? await composeTelegramReceipt(receiptContext)
-			: {
-					text: fallbackIntake.reply,
-					intake: fallbackIntake,
-					usedFallback: true,
-				};
-
-		conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
-			preferredLanguage: receipt.intake.language,
-			lastIntakeKind: receipt.intake.messageKind,
-			lastIntakeNextStep: receipt.intake.nextStep,
-			lastIntakeGoal: receipt.intake.understoodGoal,
-		});
-
-		const shouldSendReceipt = shouldAck;
-		if (shouldSendReceipt) {
-			console.log(
-				`[Telegram] Live receipt sent (${receipt.usedFallback ? "fallback" : "contextual"}): ${receipt.intake.messageKind}`,
-			);
-			await this.sendRawMessage(message.chat.id, receipt.text);
-		}
-
-		coordinator.requestRun({
-			conversationId: TELEGRAM_CONVERSATION_ID,
-			source: "telegram",
-			kind: mapReceiptKindToTriggerKind(
-				receipt.intake.messageKind,
-				liveSnapshot.status,
-			),
-			preview: summarizeLiveRunPreview(content),
-		});
 	}
 
 	private async handleCommand(chatId: number, text: string): Promise<void> {
