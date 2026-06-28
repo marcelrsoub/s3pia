@@ -194,9 +194,7 @@ export class TelegramChannel {
 			this.pollTimer = null;
 		}
 		this.started = false;
-		this.pollAbortController?.abort(
-			new Error("Telegram polling stopped"),
-		);
+		this.pollAbortController?.abort(new Error("Telegram polling stopped"));
 		if (this.activePoll) {
 			await this.activePoll.catch(() => undefined);
 		}
@@ -400,7 +398,10 @@ export class TelegramChannel {
 			});
 		} catch (err) {
 			console.error("[Telegram] Failed to process update:", err);
-			await this.sendRawMessage(message.chat.id, TELEGRAM_PROCESSING_ERROR_MESSAGE);
+			await this.sendRawMessage(
+				message.chat.id,
+				TELEGRAM_PROCESSING_ERROR_MESSAGE,
+			);
 		}
 	}
 

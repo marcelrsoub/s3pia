@@ -468,84 +468,87 @@ function createPiCustomTools(
 		},
 	});
 
-	const sendUserMessageTool = defineTool({
-		name: "send_user_message",
-		label: "Send User Message",
-		description:
-			"Send a proactive Telegram update to the user while the live run is still working.",
-		promptSnippet: "Send a proactive update to the user",
-		promptGuidelines: [
-			"Use send_user_message when you need to share progress, a partial answer, a clarification, or a concise result before the run is completely finished.",
-			"If the user should see an image, screenshot, chart, or file, include the workspace path(s) in files; mentioning them in text is not enough.",
-			"Keep Telegram updates mobile-friendly: short paragraphs, bullets, numbered steps, and one idea per line.",
-			"Do not use send_user_message for internal reasoning or to ask the user for missing information.",
-		],
-		parameters: Type.Object({
-			message: Type.String({
-				description: "The message to send to the user",
-			}),
-			files: Type.Optional(
-				Type.Array(Type.String(), {
-					description: "Optional workspace file paths to attach",
+	const buildSendUserMessageTool = (
+		name: "send_message" | "send_user_message",
+	) =>
+		defineTool({
+			name,
+			label: name === "send_message" ? "Send Message" : "Send User Message",
+			description:
+				"Send a proactive Telegram update to the user while the live run is still working.",
+			promptSnippet: "Send a proactive update to the user",
+			promptGuidelines: [
+				`Use ${name} when you need to share progress, a partial answer, a clarification, or a concise result before the run is completely finished.`,
+				"If the user should see an image, screenshot, chart, or file, include the workspace path(s) in files; mentioning them in text is not enough.",
+				"Keep Telegram updates mobile-friendly: short paragraphs, bullets, numbered steps, and one idea per line.",
+				`Do not use ${name} for internal reasoning or to ask the user for missing information.`,
+			],
+			parameters: Type.Object({
+				message: Type.String({
+					description: "The message to send to the user",
 				}),
-			),
-		}),
-		execute: async (_toolCallId, params, signal) => {
-			const message = buildSessionMessageContent(params.message);
-			if (!message) {
-				throw new Error("message parameter is required");
-			}
+				files: Type.Optional(
+					Type.Array(Type.String(), {
+						description: "Optional workspace file paths to attach",
+					}),
+				),
+			}),
+			execute: async (_toolCallId, params, signal) => {
+				const message = buildSessionMessageContent(params.message);
+				if (!message) {
+					throw new Error("message parameter is required");
+				}
 
-			const fileList = Array.isArray(params.files)
-				? params.files.filter(
-						(value): value is string => typeof value === "string",
-					)
-				: [];
-			const attachments = fileList
-				.map((filePath) => buildWorkspaceAttachment(filePath))
-				.filter((attachment): attachment is NonNullable<typeof attachment> =>
-					Boolean(attachment),
-				);
-			const warnings = fileList
-				.filter((filePath) => !buildWorkspaceAttachment(filePath))
-				.map((filePath) => `Access denied or missing file: ${filePath}`);
+				const fileList = Array.isArray(params.files)
+					? params.files.filter(
+							(value): value is string => typeof value === "string",
+						)
+					: [];
+				const attachments = fileList
+					.map((filePath) => buildWorkspaceAttachment(filePath))
+					.filter((attachment): attachment is NonNullable<typeof attachment> =>
+						Boolean(attachment),
+					);
+				const warnings = fileList
+					.filter((filePath) => !buildWorkspaceAttachment(filePath))
+					.map((filePath) => `Access denied or missing file: ${filePath}`);
 
-			const result = await deliverer(
-				message,
-				attachments.map((attachment) => attachment.path),
-				signal,
-			);
-
-			if (result) {
-				state.usedSendUserMessage = true;
-				store.addMessage(
-					conversationId,
-					"assistant",
+				const result = await deliverer(
 					message,
-					"telegram",
-					undefined,
-					undefined,
-					attachments.length > 0 ? attachments : undefined,
+					attachments.map((attachment) => attachment.path),
+					signal,
 				);
-			}
 
-			return {
-				content: [
-					{
-						type: "text",
-						text: result
-							? "Delivered the update to Telegram."
-							: "Failed to deliver the Telegram update.",
+				if (result) {
+					state.usedSendUserMessage = true;
+					store.addMessage(
+						conversationId,
+						"assistant",
+						message,
+						"telegram",
+						undefined,
+						undefined,
+						attachments.length > 0 ? attachments : undefined,
+					);
+				}
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: result
+								? "Delivered the update to Telegram."
+								: "Failed to deliver the Telegram update.",
+						},
+					],
+					details: {
+						delivered: result,
+						filesAttached: attachments.map((attachment) => attachment.filename),
+						warnings,
 					},
-				],
-				details: {
-					delivered: result,
-					filesAttached: attachments.map((attachment) => attachment.filename),
-					warnings,
-				},
-			};
-		},
-	});
+				};
+			},
+		});
 
 	const askUserTool = defineTool({
 		name: "ask_user",
@@ -597,7 +600,12 @@ function createPiCustomTools(
 		},
 	});
 
-	return [refreshThreadTool, sendUserMessageTool, askUserTool];
+	return [
+		refreshThreadTool,
+		buildSendUserMessageTool("send_message"),
+		buildSendUserMessageTool("send_user_message"),
+		askUserTool,
+	];
 }
 
 function createSessionContextSnapshot(state: LiveRunState): LiveRunSummary {
@@ -981,7 +989,10 @@ export class LiveRunCoordinator {
 						  }
 						| undefined;
 
-					if (pendingTool.toolName === "send_user_message") {
+					if (
+						pendingTool.toolName === "send_user_message" ||
+						pendingTool.toolName === "send_message"
+					) {
 						const delivered =
 							result?.delivered ??
 							result?.messageDelivered ??

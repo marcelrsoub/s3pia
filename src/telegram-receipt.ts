@@ -6,10 +6,7 @@ import {
 	type TelegramAckContext,
 } from "./telegram-ack.js";
 
-export type TelegramMessageKind =
-	| "new_run"
-	| "live_update"
-	| "blocked_answer";
+export type TelegramMessageKind = "new_run" | "live_update" | "blocked_answer";
 
 export type TelegramAttachmentKind =
 	| "none"
@@ -59,11 +56,7 @@ export interface TelegramReceiptComposerOptions {
 
 const IntakeSchema = z.object({
 	language: z.string().min(2).max(16),
-	messageKind: z.enum([
-		"new_run",
-		"live_update",
-		"blocked_answer",
-	]),
+	messageKind: z.enum(["new_run", "live_update", "blocked_answer"]),
 	attachmentKind: z.enum([
 		"none",
 		"photo",
@@ -210,7 +203,8 @@ async function generateReceiptIntake(
 			requiredShape: {
 				language: "BCP47-like short code such as en, pt, es",
 				messageKind: "new_run | live_update | blocked_answer",
-				attachmentKind: "none | photo | document | video | audio | voice | file",
+				attachmentKind:
+					"none | photo | document | video | audio | voice | file",
 				understoodGoal: "one short sentence",
 				nextStep: "one short sentence",
 				reply: "one short sentence in the user's language",

@@ -235,7 +235,7 @@ function createMockSession(): LiveConversationSession & {
 	};
 }
 
-test("suppresses the duplicate final blast when send_message already spoke", async () => {
+test("suppresses the duplicate final blast when send_user_message already spoke", async () => {
 	const store = createMockStore([
 		userMessage("Please summarize the attached notes."),
 	]);
@@ -269,6 +269,59 @@ test("suppresses the duplicate final blast when send_message already spoke", asy
 		type: "tool_execution_end",
 		toolCallId: "tool-1",
 		toolName: "send_user_message",
+		result: {
+			content: [{ type: "text", text: "Delivered the update to Telegram." }],
+			details: { delivered: true },
+		},
+		isError: false,
+	});
+	session.emit({
+		type: "turn_end",
+		message: assistantMessage("Final summary"),
+		toolResults: [],
+	});
+
+	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "idle");
+
+	expect(session.sendUserMessageCalls).toHaveLength(1);
+	expect(deliveries).toHaveLength(0);
+	expect(coordinator.getStatusSnapshot("telegram").currentRun).toBeNull();
+});
+
+test("suppresses the duplicate final blast when send_message already spoke", async () => {
+	const store = createMockStore([
+		userMessage("Please summarize the attached notes."),
+	]);
+	const session = createMockSession();
+	const deliveries: string[] = [];
+	const coordinator = new LiveRunCoordinator({
+		store,
+		sessionFactory: async () => session,
+		deliverer: async (text) => {
+			deliveries.push(text);
+			return true;
+		},
+	});
+
+	coordinator.requestRun({
+		conversationId: "telegram",
+		source: "telegram",
+		kind: "new_run",
+		preview: "Please summarize the attached notes.",
+	});
+
+	await waitFor(() => session.sendUserMessageCalls.length === 1);
+	session.emit({ type: "turn_start" });
+	session.emit({
+		type: "tool_execution_start",
+		toolCallId: "tool-1",
+		toolName: "send_message",
+		args: { message: "Working on it." },
+	});
+	session.emit({
+		type: "tool_execution_end",
+		toolCallId: "tool-1",
+		toolName: "send_message",
 		result: {
 			content: [{ type: "text", text: "Delivered the update to Telegram." }],
 			details: { delivered: true },
