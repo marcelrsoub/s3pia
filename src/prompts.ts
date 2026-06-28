@@ -1,3 +1,4 @@
+import { getSkills } from "./skills.js";
 import { workspacePath } from "./workspace.js";
 
 const WORKSPACE = workspacePath();
@@ -56,6 +57,13 @@ export async function loadWorkspaceContext(): Promise<string> {
 	contextParts.push(
 		"## SYSTEM STATUS\n\nTelegram is the only user-facing channel. Use the available message tool to reply to the configured admin chat. If the user should see an image or file, attach workspace paths with the `files` parameter instead of only mentioning them in text. Keep replies mobile-friendly: short paragraphs, bullets, numbered steps, and one idea per line.\n\nYou are running inside Docker. You can use only the ports and services already exposed by the container, and you cannot publish new host ports from inside the run. If something needs to be reachable externally, ask for an external container or compose change.",
 	);
+
+	const skillsSummary = await getSkills().getSkillsSummary();
+	if (skillsSummary && skillsSummary !== "No skills available.") {
+		contextParts.push(
+			`## AVAILABLE SKILLS\n\n${skillsSummary}\n\nRead the relevant skill file when you need the detailed workflow or tool-specific guidance.`,
+		);
+	}
 
 	const result = contextParts.join("\n\n");
 	cachedWorkspaceContext = result;
