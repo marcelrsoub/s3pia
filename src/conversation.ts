@@ -24,6 +24,7 @@ export interface ConversationMetadata {
 	activeRunUpdatedAt?: number;
 	piSessionFile?: string;
 	piSessionId?: string;
+	telegramLastProcessedUpdateId?: number;
 }
 
 export interface Message {

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { conversationStore, TELEGRAM_CONVERSATION_ID } from "../src/conversation";
 import { TelegramChannel } from "../src/channels/telegram";
 
 test("steer command forwards a live nudge to the current run", async () => {
@@ -159,5 +160,50 @@ test("routes an idle chat message into a live run instead of stopping at status"
 		} else {
 			process.env.ADMIN_TELEGRAM_ID = previousAdminId;
 		}
+	}
+});
+
+test("restores the last processed Telegram update id from persisted metadata", async () => {
+	const previousMetadata = conversationStore.getMetadata(
+		TELEGRAM_CONVERSATION_ID,
+	).telegramLastProcessedUpdateId;
+	conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
+		telegramLastProcessedUpdateId: 41,
+	});
+
+	const originalFetch = globalThis.fetch;
+	const requestedUrls: string[] = [];
+	globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+		requestedUrls.push(String(input));
+		return new Response(
+			JSON.stringify({
+				ok: true,
+				result: [],
+			}),
+			{
+				status: 200,
+				headers: {
+					"Content-Type": "application/json",
+				},
+			},
+		);
+	}) as typeof fetch;
+
+	try {
+		const channel = new TelegramChannel({
+			enabled: true,
+			allowFrom: ["1"],
+			token: "test-token",
+		});
+
+		await channel.start();
+		await channel.stop();
+
+		expect(requestedUrls[0]).toContain("offset=42");
+	} finally {
+		globalThis.fetch = originalFetch;
+		conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
+			telegramLastProcessedUpdateId: previousMetadata,
+		});
 	}
 });

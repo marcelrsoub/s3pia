@@ -168,6 +168,9 @@ export class TelegramChannel {
 		if (!conversationStore.get(TELEGRAM_CONVERSATION_ID)) {
 			conversationStore.create(TELEGRAM_CONVERSATION_ID);
 		}
+		this.lastUpdateId =
+			conversationStore.getMetadata(TELEGRAM_CONVERSATION_ID)
+				.telegramLastProcessedUpdateId || 0;
 
 		this.started = true;
 		this.pollTimer = setInterval(() => {
@@ -242,6 +245,9 @@ export class TelegramChannel {
 			for (const update of updates) {
 				await this.processUpdate(update);
 				this.lastUpdateId = update.update_id;
+				conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
+					telegramLastProcessedUpdateId: this.lastUpdateId,
+				});
 			}
 		} catch (err) {
 			console.error("[Telegram] Poll error:", err);

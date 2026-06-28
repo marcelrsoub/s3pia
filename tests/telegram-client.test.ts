@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
-import { normalizeWorkspaceFilePath } from "../src/telegram-client";
+import {
+	normalizeWorkspaceFilePath,
+	sendTelegramMessageToAdmin,
+} from "../src/telegram-client";
 import { workspacePath } from "../src/workspace";
 
 test("normalizes relative paths inside the workspace", () => {
@@ -18,4 +21,69 @@ test("maps Docker workspace paths to the active workspace", () => {
 test("rejects paths outside the workspace", () => {
 	expect(normalizeWorkspaceFilePath("../outside.txt")).toBeNull();
 	expect(normalizeWorkspaceFilePath("/tmp/outside.txt")).toBeNull();
+});
+
+test("treats a sent text as delivered even if an attachment upload fails", async () => {
+	const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;
+	const originalFetch = globalThis.fetch;
+	const tempDir = workspacePath("tmp");
+	const tempFile = workspacePath(
+		"tmp",
+		`telegram-client-test-${crypto.randomUUID()}.txt`,
+	);
+
+	await Bun.$`mkdir -p ${tempDir}`;
+	await Bun.write(tempFile, "attachment content");
+
+	process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+	process.env.ADMIN_TELEGRAM_ID = "123";
+
+	globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+		const url = String(input);
+		if (url.includes("/sendMessage")) {
+			return new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+		if (url.includes("/sendDocument")) {
+			return new Response(
+				JSON.stringify({ ok: false, description: "upload failed" }),
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		}
+		throw new Error(`Unexpected fetch: ${url}`);
+	}) as typeof fetch;
+
+	try {
+		const result = await sendTelegramMessageToAdmin(
+			"Hello from the test",
+			[tempFile],
+		);
+
+		expect(result.messageDelivered).toBe(true);
+		expect(result.ok).toBe(false);
+		expect(result.warnings).toContain(`Failed to send file: ${tempFile}`);
+	} finally {
+		globalThis.fetch = originalFetch;
+		if (previousToken === undefined) {
+			delete process.env.TELEGRAM_BOT_TOKEN;
+		} else {
+			process.env.TELEGRAM_BOT_TOKEN = previousToken;
+		}
+		if (previousAdminId === undefined) {
+			delete process.env.ADMIN_TELEGRAM_ID;
+		} else {
+			process.env.ADMIN_TELEGRAM_ID = previousAdminId;
+		}
+		try {
+			await Bun.$`rm -f ${tempFile}`;
+		} catch {
+			// Ignore cleanup failures.
+		}
+	}
 });

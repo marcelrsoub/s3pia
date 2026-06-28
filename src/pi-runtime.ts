@@ -319,7 +319,6 @@ function seedConversationHistory(
 }
 
 function resolveDefaultModelSelection(): {
-	provider: string;
 	modelId: string;
 } | null {
 	const raw = getEnvVar("AI_MODEL")?.trim();
@@ -327,27 +326,9 @@ function resolveDefaultModelSelection(): {
 		return null;
 	}
 
-	const segments = raw.split("/").filter(Boolean);
-	if (segments.length >= 2) {
-		const [provider, ...modelParts] = segments;
-		const modelId = modelParts.join("/");
-		if (!provider || !modelId) {
-			return null;
-		}
-		return {
-			provider,
-			modelId,
-		};
-	}
-
-	if (getEnvVar("OPENROUTER_API_KEY")) {
-		return {
-			provider: "openrouter",
-			modelId: raw,
-		};
-	}
-
-	return null;
+	return {
+		modelId: raw,
+	};
 }
 
 function buildSessionMessageContent(text: string): string {
@@ -554,8 +535,19 @@ export class LiveRunCoordinator {
 		this.store = options.store || conversationStore;
 		this.deliverer =
 			options.deliverer ||
-			(async (text, files = [], abortSignal) =>
-				(await sendTelegramMessageToAdmin(text, files, abortSignal)).ok);
+			(async (text, files = [], abortSignal) => {
+				try {
+					const result = await sendTelegramMessageToAdmin(
+						text,
+						files,
+						abortSignal,
+					);
+					return result.messageDelivered;
+				} catch (err) {
+					console.warn("[LiveRun] Failed to deliver Telegram message:", err);
+					return false;
+				}
+			});
 		this.sessionFactory =
 			options.sessionFactory || this.createDefaultSession.bind(this);
 		this.defaultConversationId =
@@ -954,7 +946,7 @@ export class LiveRunCoordinator {
 		const modelSelection = resolveDefaultModelSelection();
 		if (modelSelection) {
 			settingsManager.applyOverrides({
-				defaultProvider: modelSelection.provider,
+				defaultProvider: "openrouter",
 				defaultModel: modelSelection.modelId,
 			});
 		}
