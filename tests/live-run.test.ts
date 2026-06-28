@@ -250,6 +250,45 @@ test("suppresses the duplicate final blast when send_message already spoke", asy
 	expect(coordinator.getStatusSnapshot("telegram").currentRun).toBeNull();
 });
 
+test("falls back to the final assistant message on agent_end when turn_end has no text", async () => {
+	const store = createMockStore([userMessage("Summarize the task.")]);
+	const session = createMockSession();
+	const deliveries: string[] = [];
+	const coordinator = new LiveRunCoordinator({
+		store,
+		sessionFactory: async () => session,
+		deliverer: async (text) => {
+			deliveries.push(text);
+			return true;
+		},
+	});
+
+	coordinator.requestRun({
+		conversationId: "telegram",
+		source: "telegram",
+		kind: "new_run",
+		preview: "Summarize the task.",
+	});
+
+	await waitFor(() => session.sendUserMessageCalls.length === 1);
+	session.emit({ type: "turn_start" });
+	session.emit({
+		type: "turn_end",
+		message: assistantMessage(""),
+		toolResults: [],
+	});
+	session.emit({
+		type: "agent_end",
+		messages: [assistantMessage("Fallback response from agent_end")],
+		willRetry: false,
+	});
+
+	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "idle");
+
+	expect(deliveries).toEqual(["Fallback response from agent_end"]);
+	expect(coordinator.getStatusSnapshot("telegram").currentRun).toBeNull();
+});
+
 test("steers the same session when a follow-up arrives during work", async () => {
 	const store = createMockStore([userMessage("Analyze the draft.")]);
 	const session = createMockSession();

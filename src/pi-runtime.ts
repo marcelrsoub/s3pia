@@ -8,6 +8,7 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { getModel as getBuiltinModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { buildThreadState } from "./ai-tools.js";
 import {
@@ -112,6 +113,7 @@ interface LiveRunState {
 	updatedAt?: number;
 	rerunRequested: boolean;
 	usedSendUserMessage: boolean;
+	turnResponseDelivered: boolean;
 	session: LiveConversationSession | null;
 	sessionLoading: Promise<LiveConversationSession> | null;
 	unsubscribe: (() => void) | null;
@@ -665,6 +667,7 @@ export class LiveRunCoordinator {
 			updatedAt: activeRun?.updatedAt || Date.now(),
 			rerunRequested: false,
 			usedSendUserMessage: false,
+			turnResponseDelivered: false,
 			session: null,
 			sessionLoading: null,
 			unsubscribe: null,
@@ -808,6 +811,7 @@ export class LiveRunCoordinator {
 				state.startedAt ??= now;
 				state.updatedAt = now;
 				state.usedSendUserMessage = false;
+				state.turnResponseDelivered = false;
 				writeActiveRunMetadata(this.store, conversationId, state);
 				break;
 			}
@@ -835,10 +839,12 @@ export class LiveRunCoordinator {
 						| {
 								details?: {
 									delivered?: boolean;
+									messageDelivered?: boolean;
 									blocked?: boolean;
 									question?: string;
 								};
 								delivered?: boolean;
+								messageDelivered?: boolean;
 								blocked?: boolean;
 								question?: string;
 						  }
@@ -846,7 +852,11 @@ export class LiveRunCoordinator {
 
 					if (pendingTool.toolName === "send_user_message") {
 						const delivered =
-							result?.delivered ?? result?.details?.delivered ?? true;
+							result?.delivered ??
+							result?.messageDelivered ??
+							result?.details?.delivered ??
+							result?.details?.messageDelivered ??
+							false;
 						if (delivered) {
 							state.usedSendUserMessage = true;
 						}
@@ -882,7 +892,7 @@ export class LiveRunCoordinator {
 				break;
 			}
 			case "agent_end": {
-				// The per-turn handler sends the final response. No additional work is needed here.
+				await this.handleAgentEnd(conversationId, state, session, event);
 				break;
 			}
 			default:
@@ -910,12 +920,62 @@ export class LiveRunCoordinator {
 		) {
 			const delivered = await this.deliverer(assistantText, []);
 			if (delivered) {
+				state.turnResponseDelivered = true;
 				this.store.addMessage(
 					conversationId,
 					"assistant",
 					assistantText,
 					"telegram",
 				);
+			}
+		}
+
+		state.usedSendUserMessage = false;
+		state.updatedAt = Date.now();
+
+		if (state.status !== "blocked" && !hasPendingMessages) {
+			state.status = "idle";
+			state.question = undefined;
+			state.startedAt = undefined;
+			state.rerunRequested = false;
+		}
+
+		writeActiveRunMetadata(this.store, conversationId, state);
+	}
+
+	private async handleAgentEnd(
+		conversationId: string,
+		state: LiveRunState,
+		session: LiveConversationSession,
+		event: Extract<AgentSessionEvent, { type: "agent_end" }>,
+	): Promise<void> {
+		const hasPendingMessages =
+			Boolean(session.pendingMessageCount && session.pendingMessageCount > 0) ||
+			state.rerunRequested;
+
+		if (
+			state.status !== "blocked" &&
+			!state.usedSendUserMessage &&
+			!state.turnResponseDelivered &&
+			!hasPendingMessages
+		) {
+			const lastAssistant = [...event.messages]
+				.reverse()
+				.find((message) => message.role === "assistant");
+			const assistantText =
+				extractTextFromMessage(lastAssistant) || session.getLastAssistantText();
+
+			if (assistantText) {
+				const delivered = await this.deliverer(assistantText, []);
+				if (delivered) {
+					state.turnResponseDelivered = true;
+					this.store.addMessage(
+						conversationId,
+						"assistant",
+						assistantText,
+						"telegram",
+					);
+				}
 			}
 		}
 
@@ -944,7 +1004,21 @@ export class LiveRunCoordinator {
 	}): Promise<LiveConversationSession> {
 		const settingsManager = SettingsManager.create(PI_WORKSPACE, PI_AGENT_DIR);
 		const modelSelection = resolveDefaultModelSelection();
-		if (modelSelection) {
+		const selectedModel = modelSelection
+			? getBuiltinModel(
+					"openrouter",
+					modelSelection.modelId as Parameters<typeof getBuiltinModel>[1],
+				)
+			: undefined;
+		if (selectedModel) {
+			settingsManager.applyOverrides({
+				defaultProvider: selectedModel.provider,
+				defaultModel: selectedModel.id,
+			});
+		} else if (modelSelection) {
+			console.warn(
+				`[LiveRun] Unknown OpenRouter model in AI_MODEL: ${modelSelection.modelId}`,
+			);
 			settingsManager.applyOverrides({
 				defaultProvider: "openrouter",
 				defaultModel: modelSelection.modelId,
@@ -975,6 +1049,7 @@ export class LiveRunCoordinator {
 			settingsManager,
 			sessionManager,
 			resourceLoader,
+			...(selectedModel ? { model: selectedModel } : {}),
 			tools: ["read", "write", "edit", "bash", "grep", "find", "ls"],
 			customTools: createPiCustomTools(
 				conversationId,
