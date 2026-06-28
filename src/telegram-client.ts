@@ -213,9 +213,19 @@ function splitTelegramTextIntoChunks(
 	return chunks.length > 0 ? chunks : [""];
 }
 
-function convertToTelegramMarkdown(text: string): string {
+function escapeTelegramHtml(text: string): string {
+	return text
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;");
+}
+
+function escapeTelegramHtmlAttribute(text: string): string {
+	return escapeTelegramHtml(text).replace(/"/g, "&quot;");
+}
+
+function formatTelegramHtml(text: string): string {
 	const structuredText = normalizeTelegramMarkdownStructure(text);
-	const ALL_SPECIAL = /[_*[\]()~`>#+\-=|{}.!]/g;
 
 	interface ProtectedPart {
 		placeholder: string;
@@ -231,41 +241,40 @@ function convertToTelegramMarkdown(text: string): string {
 	};
 
 	let result = structuredText;
-	result = result.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-		const escapedCode = code.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
-		return protect(`\`\`\`${lang}\n${escapedCode}\`\`\``);
+	result = result.replace(/```(?:[\w-]*)\n?([\s\S]*?)```/g, (_, code) => {
+		return protect(`<pre>${escapeTelegramHtml(code)}</pre>`);
 	});
 	result = result.replace(/`([^`\n]+)`/g, (_, code) => {
-		const escaped = code.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
-		return protect(`\`${escaped}\``);
+		return protect(`<code>${escapeTelegramHtml(code)}</code>`);
 	});
 	result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, linkText, url) => {
-		const escapedText = linkText.replace(ALL_SPECIAL, "\\$&");
-		const escapedUrl = url.replace(/[)]/g, "\\$&");
-		return protect(`[${escapedText}](${escapedUrl})`);
+		return protect(
+			`<a href="${escapeTelegramHtmlAttribute(url)}">${escapeTelegramHtml(
+				linkText,
+			)}</a>`,
+		);
 	});
 	result = result.replace(/\*\*([^*]+)\*\*/g, (_, content) => {
-		const escaped = content.replace(ALL_SPECIAL, "\\$&");
-		return protect(`*${escaped}*`);
+		return protect(`<b>${escapeTelegramHtml(content)}</b>`);
 	});
 	result = result.replace(/__([^_]+)__/g, (_, content) => {
-		const escaped = content.replace(ALL_SPECIAL, "\\$&");
-		return protect(`__${escaped}__`);
+		return protect(`<b>${escapeTelegramHtml(content)}</b>`);
 	});
 	result = result.replace(/\*([^*\n]+)\*/g, (_, content) => {
-		const escaped = content.replace(ALL_SPECIAL, "\\$&");
-		return protect(`_${escaped}_`);
+		return protect(`<i>${escapeTelegramHtml(content)}</i>`);
 	});
 	result = result.replace(/_([^_\n]+)_/g, (_, content) => {
-		const escaped = content.replace(ALL_SPECIAL, "\\$&");
-		return protect(`_${escaped}_`);
+		return protect(`<i>${escapeTelegramHtml(content)}</i>`);
 	});
 	result = result.replace(/^(>+\s*)(.*)$/gm, (_, prefix, content) => {
-		const escaped = content.replace(ALL_SPECIAL, "\\$&");
-		return protect(`${prefix}${escaped}`);
+		const quoteLevel = String(prefix).replace(/\s/g, "").length;
+		const marker = quoteLevel > 1 ? `${">".repeat(quoteLevel - 1)} ` : "";
+		return protect(
+			`<blockquote>${escapeTelegramHtml(marker + content)}</blockquote>`,
+		);
 	});
 
-	result = result.replace(ALL_SPECIAL, "\\$&");
+	result = escapeTelegramHtml(result);
 	for (const { placeholder, replacement } of protectedParts) {
 		result = result.replace(placeholder, replacement);
 	}
@@ -321,7 +330,7 @@ export function buildWorkspaceAttachment(
 async function sendTelegramRawMessage(
 	chatId: number,
 	text: string,
-	parseMode: "MarkdownV2" | "Markdown" | "HTML" | null = "MarkdownV2",
+	format: "html" | "plain",
 	abortSignal?: AbortSignal,
 ): Promise<boolean> {
 	const url = getTelegramApiUrl("sendMessage");
@@ -341,7 +350,7 @@ async function sendTelegramRawMessage(
 			body: JSON.stringify({
 				chat_id: chatId,
 				text,
-				...(parseMode ? { parse_mode: parseMode } : {}),
+				...(format === "html" ? { parse_mode: "HTML" } : {}),
 			}),
 			signal: linked.controller.signal,
 		});
@@ -363,18 +372,18 @@ async function sendTelegramText(
 ): Promise<boolean> {
 	const chunks = splitTelegramTextIntoChunks(text);
 	for (const chunk of chunks) {
-		const markdownMessage = convertToTelegramMarkdown(chunk);
+		const htmlMessage = formatTelegramHtml(chunk);
 		const sent = await sendTelegramRawMessage(
 			chatId,
-			markdownMessage,
-			"MarkdownV2",
+			htmlMessage,
+			"html",
 			abortSignal,
 		);
 		if (!sent) {
 			const plain = await sendTelegramRawMessage(
 				chatId,
 				chunk,
-				null,
+				"plain",
 				abortSignal,
 			);
 			if (!plain) return false;
