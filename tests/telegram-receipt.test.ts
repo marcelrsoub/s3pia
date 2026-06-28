@@ -91,8 +91,8 @@ test("classifies live updates and blocked answers from the live thread", () => {
 	expect(blockedAnswer.understoodGoal).toContain("answer");
 });
 
-test("classifies status checks and new runs when idle", () => {
-	const statusCheck = classifyTelegramReceiptIntake({
+test("classifies idle messages as new runs", () => {
+	const idleMessage = classifyTelegramReceiptIntake({
 		content: "Still there?",
 		hasFileAttachment: false,
 		isBusy: false,
@@ -100,7 +100,7 @@ test("classifies status checks and new runs when idle", () => {
 		preferredLanguage: "en",
 		activeRun: null,
 	});
-	expect(statusCheck.messageKind).toBe("status_check");
+	expect(idleMessage.messageKind).toBe("new_run");
 
 	const newRun = classifyTelegramReceiptIntake({
 		content: "Please draft a summary of these notes.",

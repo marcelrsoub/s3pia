@@ -163,7 +163,7 @@ test("routes an idle chat message into a live run instead of stopping at status"
 	}
 });
 
-test("replies to short idle status checks instead of staying silent", async () => {
+test("routes short idle messages straight to the agent", async () => {
 	const globalScope = globalThis as Record<string, unknown>;
 	const requests: Array<{
 		conversationId?: string;
@@ -235,7 +235,7 @@ test("replies to short idle status checks instead of staying silent", async () =
 			},
 		});
 
-		expect(replies[0]).toBe("I’m here. Send me what you want me to work on.");
+		expect(replies).toHaveLength(0);
 		expect(requests).toEqual([
 			{
 				conversationId: "telegram",

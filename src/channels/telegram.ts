@@ -370,8 +370,7 @@ export class TelegramChannel {
 			lastIntakeGoal: receipt.intake.understoodGoal,
 		});
 
-		const shouldSendReceipt =
-			shouldAck || receipt.intake.messageKind === "status_check";
+		const shouldSendReceipt = shouldAck;
 		if (shouldSendReceipt) {
 			console.log(
 				`[Telegram] Live receipt sent (${receipt.usedFallback ? "fallback" : "contextual"}): ${receipt.intake.messageKind}`,
