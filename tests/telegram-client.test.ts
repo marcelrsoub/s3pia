@@ -193,8 +193,68 @@ test("renders markdown tables as aligned preformatted blocks", async () => {
 		};
 		expect(payload.parse_mode).toBe("HTML");
 		expect(payload.text).toContain(
-			"<pre>Name  | Score\n----- | -----\nAlice | 10   \nBob   | 3    \n</pre>",
+			"<pre>| Name  | Score |\n| ----- | ----- |\n| Alice | 10    |\n| Bob   | 3     |\n</pre>",
 		);
+	} finally {
+		globalThis.fetch = originalFetch;
+		if (previousToken === undefined) {
+			delete process.env.TELEGRAM_BOT_TOKEN;
+		} else {
+			process.env.TELEGRAM_BOT_TOKEN = previousToken;
+		}
+		if (previousAdminId === undefined) {
+			delete process.env.ADMIN_TELEGRAM_ID;
+		} else {
+			process.env.ADMIN_TELEGRAM_ID = previousAdminId;
+		}
+	}
+});
+
+test("renders collapsed inline tables as preformatted blocks", async () => {
+	const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;
+	const originalFetch = globalThis.fetch;
+	let sentMessage: { chat_id: number; text: string; parse_mode?: string } | null =
+		null;
+
+	process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+	process.env.ADMIN_TELEGRAM_ID = "123";
+
+	globalThis.fetch = (async (input, init) => {
+		const url = String(input);
+		if (url.includes("/sendMessage")) {
+			sentMessage = JSON.parse(String(init?.body)) as {
+				chat_id: number;
+				text: string;
+				parse_mode?: string;
+			};
+			return new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+		throw new Error(`Unexpected fetch: ${url}`);
+	}) as typeof fetch;
+
+	try {
+		const result = await sendTelegramMessageToAdmin(
+			"Done. All four triggers live now: | Trigger | When | Purpose | |---------|------|---------| | Daily Coaching Brief | 10:00 | Push day plan, tasks to Todoist | | Evening Accountability | 20:00 | Mirror — did you do what you said? | | Mid-week Review | Wed 19:00 | Adjust the plan mid-flight | | Weekly Review | Sun 12:00 | Full review, stats, next week's priorities | I'm taking this seriously, Captain. No cheerleading — coaching. If you drift, I'll call it. If you crush it, I'll say so. 🫡🤎",
+		);
+
+		expect(result.messageDelivered).toBe(true);
+		if (!sentMessage) {
+			throw new Error("Expected a Telegram payload");
+		}
+		const payload = sentMessage as {
+			chat_id: number;
+			text: string;
+			parse_mode?: string;
+		};
+		expect(payload.parse_mode).toBe("HTML");
+		expect(payload.text).toContain("Done. All four triggers live now:");
+		expect(payload.text).toContain("<pre>| Trigger");
+		expect(payload.text).toContain("| Weekly Review");
+		expect(payload.text).toContain("I'm taking this seriously, Captain.");
 	} finally {
 		globalThis.fetch = originalFetch;
 		if (previousToken === undefined) {

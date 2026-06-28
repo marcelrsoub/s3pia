@@ -58,6 +58,20 @@ function normalizeTelegramMarkdownStructure(text: string): string {
 			continue;
 		}
 
+		const inlineTable = extractCompressedTableLine(line);
+		if (inlineTable) {
+			if (inlineTable.prefix) {
+				normalized.push(inlineTable.prefix);
+			}
+			normalized.push("```");
+			normalized.push(inlineTable.renderedTable);
+			normalized.push("```");
+			if (inlineTable.suffix) {
+				normalized.push(inlineTable.suffix);
+			}
+			continue;
+		}
+
 		const nextLine = lines[index + 1];
 		if (
 			nextLine &&
@@ -105,6 +119,10 @@ function normalizeTelegramMarkdownStructure(text: string): string {
 	return normalized.join("\n");
 }
 
+function isMarkdownTableCell(text: string): boolean {
+	return /^:?-{3,}:?$/.test(text.trim());
+}
+
 function splitMarkdownTableCells(line: string): string[] {
 	let trimmed = line.trim();
 	if (trimmed.startsWith("|")) {
@@ -127,7 +145,75 @@ function isMarkdownTableRow(line: string): boolean {
 function isMarkdownTableSeparatorLine(line: string): boolean {
 	const cells = splitMarkdownTableCells(line);
 	if (cells.length < 2) return false;
-	return cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+	return cells.every((cell) => isMarkdownTableCell(cell));
+}
+
+function extractCompressedTableLine(
+	line: string,
+): { prefix: string; renderedTable: string; suffix: string } | null {
+	const firstPipe = line.indexOf("|");
+	const lastPipe = line.lastIndexOf("|");
+	if (firstPipe < 0 || lastPipe <= firstPipe) {
+		return null;
+	}
+
+	const prefix = line.slice(0, firstPipe).trimEnd();
+	const suffix = line.slice(lastPipe + 1).trimStart();
+	const tableText = line.slice(firstPipe, lastPipe + 1).trim();
+	if (!tableText.includes("|")) return null;
+
+	const cells = tableText
+		.split("|")
+		.map((cell) => cell.trim())
+		.filter((cell) => cell.length > 0);
+	if (cells.length < 4) {
+		return null;
+	}
+
+	for (let index = 0; index < cells.length; index += 1) {
+		if (!isMarkdownTableCell(cells[index])) continue;
+
+		let separatorLength = 0;
+		while (
+			index + separatorLength < cells.length &&
+			isMarkdownTableCell(cells[index + separatorLength])
+		) {
+			separatorLength += 1;
+		}
+
+		if (separatorLength < 2) {
+			continue;
+		}
+
+		if (index !== separatorLength) {
+			continue;
+		}
+
+		const dataCells = cells.slice(index + separatorLength);
+		if (dataCells.length === 0 || dataCells.length % separatorLength !== 0) {
+			continue;
+		}
+
+		const renderedTable = renderTelegramTableBlock([
+			`| ${cells.slice(0, separatorLength).join(" | ")} |`,
+			`| ${cells.slice(index, index + separatorLength).join(" | ")} |`,
+			...chunkCells(dataCells, separatorLength).map(
+				(row) => `| ${row.join(" | ")} |`,
+			),
+		]);
+
+		return { prefix, renderedTable, suffix };
+	}
+
+	return null;
+}
+
+function chunkCells(cells: string[], width: number): string[][] {
+	const rows: string[][] = [];
+	for (let index = 0; index < cells.length; index += width) {
+		rows.push(cells.slice(index, index + width));
+	}
+	return rows;
 }
 
 function renderTelegramTableBlock(lines: string[]): string {
@@ -151,9 +237,11 @@ function renderTelegramTableBlock(lines: string[]): string {
 	);
 
 	const formatRow = (row: string[]): string =>
-		row.map((cell, columnIndex) => cell.padEnd(widths[columnIndex])).join(" | ");
+		`| ${row
+			.map((cell, columnIndex) => cell.padEnd(widths[columnIndex]))
+			.join(" | ")} |`;
 
-	const separator = widths.map((width) => "-".repeat(width)).join(" | ");
+	const separator = `| ${widths.map((width) => "-".repeat(width)).join(" | ")} |`;
 	const [header, ...dataRows] = normalizedRows;
 	const renderedRows = [
 		formatRow(header),
