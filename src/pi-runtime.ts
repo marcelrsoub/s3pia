@@ -274,6 +274,40 @@ function extractTextFromMessage(message: unknown): string | undefined {
 	return undefined;
 }
 
+function extractAssistantFailureText(message: unknown): string | undefined {
+	const text = extractTextFromMessage(message);
+	if (text) {
+		return text;
+	}
+
+	if (!message || typeof message !== "object") {
+		return undefined;
+	}
+
+	const maybeMessage = message as {
+		errorMessage?: unknown;
+		stopReason?: unknown;
+	};
+	const errorMessage =
+		typeof maybeMessage.errorMessage === "string"
+			? maybeMessage.errorMessage.trim()
+			: "";
+	const stopReason =
+		typeof maybeMessage.stopReason === "string"
+			? maybeMessage.stopReason
+			: undefined;
+
+	if (!errorMessage) {
+		return undefined;
+	}
+
+	if (stopReason === "aborted") {
+		return undefined;
+	}
+
+	return `Error: ${errorMessage}`;
+}
+
 function isWorkspaceContextFile(path: string): boolean {
 	const file = basename(path);
 	return (
@@ -632,11 +666,16 @@ export class LiveRunCoordinator {
 		const conversationId = request.conversationId || this.defaultConversationId;
 		const state = this.ensureState(conversationId);
 		const now = Date.now();
-
-		state.source = request.source;
-		state.preview = summarizePreview(
+		const preview = summarizePreview(
 			request.preview || state.preview || "Live run update",
 		);
+
+		console.log(
+			`[LiveRun] Request received (${request.kind}/${request.source}): ${preview}`,
+		);
+
+		state.source = request.source;
+		state.preview = preview;
 		state.updatedAt = now;
 
 		void this.routeRequest(conversationId, state, request).catch((err) => {
@@ -713,12 +752,15 @@ export class LiveRunCoordinator {
 			store: this.store,
 		})
 			.then((session) => {
-				state.session = session;
-				state.sessionFile = session.sessionFile;
-				state.id = session.sessionId || state.id;
-				writeActiveRunMetadata(this.store, conversationId, state);
-				state.unsubscribe = session.subscribe((event) => {
-					void this.handleSessionEvent(
+			state.session = session;
+			state.sessionFile = session.sessionFile;
+			state.id = session.sessionId || state.id;
+			console.log(
+				`[LiveRun] Pi session ready: ${session.sessionId}${session.sessionFile ? ` (${session.sessionFile})` : ""}`,
+			);
+			writeActiveRunMetadata(this.store, conversationId, state);
+			state.unsubscribe = session.subscribe((event) => {
+				void this.handleSessionEvent(
 						conversationId,
 						state,
 						session,
@@ -748,6 +790,9 @@ export class LiveRunCoordinator {
 		const text = buildSessionMessageContent(
 			request.preview || "Live run update",
 		);
+		console.log(
+			`[LiveRun] Routing ${request.kind} to Pi (${busy ? "busy" : "idle"}): ${text}`,
+		);
 
 		if (request.kind === "steer") {
 			if (busy) {
@@ -763,6 +808,7 @@ export class LiveRunCoordinator {
 			state.updatedAt = Date.now();
 			writeActiveRunMetadata(this.store, conversationId, state);
 			await session.sendUserMessage(text);
+			console.log("[LiveRun] User message accepted by Pi");
 			return;
 		}
 
@@ -773,6 +819,7 @@ export class LiveRunCoordinator {
 			state.updatedAt = Date.now();
 			writeActiveRunMetadata(this.store, conversationId, state);
 			await session.sendUserMessage(text);
+			console.log("[LiveRun] User message accepted by Pi");
 			return;
 		}
 
@@ -785,6 +832,7 @@ export class LiveRunCoordinator {
 			}
 
 			await session.sendUserMessage(text);
+			console.log("[LiveRun] User message accepted by Pi");
 			return;
 		}
 
@@ -796,6 +844,7 @@ export class LiveRunCoordinator {
 		}
 
 		await session.sendUserMessage(text);
+		console.log("[LiveRun] User message accepted by Pi");
 	}
 
 	private async handleSessionEvent(
@@ -911,20 +960,27 @@ export class LiveRunCoordinator {
 			state.rerunRequested;
 		const assistantText =
 			extractTextFromMessage(event.message) || session.getLastAssistantText();
+		const assistantFailureText = extractAssistantFailureText(event.message);
 
 		if (
 			state.status !== "blocked" &&
 			!state.usedSendUserMessage &&
 			!hasPendingMessages &&
-			assistantText
+			(assistantText || assistantFailureText)
 		) {
-			const delivered = await this.deliverer(assistantText, []);
+			const responseText = assistantText || assistantFailureText || "";
+			if (assistantFailureText && !assistantText) {
+				console.warn(
+					`[LiveRun] Assistant turn ended with error: ${assistantFailureText}`,
+				);
+			}
+			const delivered = await this.deliverer(responseText, []);
 			if (delivered) {
 				state.turnResponseDelivered = true;
 				this.store.addMessage(
 					conversationId,
 					"assistant",
-					assistantText,
+					responseText,
 					"telegram",
 				);
 			}
@@ -964,15 +1020,22 @@ export class LiveRunCoordinator {
 				.find((message) => message.role === "assistant");
 			const assistantText =
 				extractTextFromMessage(lastAssistant) || session.getLastAssistantText();
+			const assistantFailureText = extractAssistantFailureText(lastAssistant);
 
-			if (assistantText) {
-				const delivered = await this.deliverer(assistantText, []);
+			if (assistantText || assistantFailureText) {
+				const responseText = assistantText || assistantFailureText || "";
+				if (assistantFailureText && !assistantText) {
+					console.warn(
+						`[LiveRun] Agent ended with error: ${assistantFailureText}`,
+					);
+				}
+				const delivered = await this.deliverer(responseText, []);
 				if (delivered) {
 					state.turnResponseDelivered = true;
 					this.store.addMessage(
 						conversationId,
 						"assistant",
-						assistantText,
+						responseText,
 						"telegram",
 					);
 				}

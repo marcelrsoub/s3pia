@@ -289,6 +289,54 @@ test("falls back to the final assistant message on agent_end when turn_end has n
 	expect(coordinator.getStatusSnapshot("telegram").currentRun).toBeNull();
 });
 
+test("surfaces assistant errors when the agent ends without text", async () => {
+	const store = createMockStore([userMessage("Do the thing.")]);
+	const session = createMockSession();
+	const deliveries: string[] = [];
+	const coordinator = new LiveRunCoordinator({
+		store,
+		sessionFactory: async () => session,
+		deliverer: async (text) => {
+			deliveries.push(text);
+			return true;
+		},
+	});
+
+	coordinator.requestRun({
+		conversationId: "telegram",
+		source: "telegram",
+		kind: "new_run",
+		preview: "Do the thing.",
+	});
+
+	await waitFor(() => session.sendUserMessageCalls.length === 1);
+	session.emit({ type: "turn_start" });
+	session.emit({
+		type: "turn_end",
+		message: {
+			...assistantMessage(""),
+			stopReason: "error",
+			errorMessage: "OpenRouter request failed",
+		},
+		toolResults: [],
+	});
+	session.emit({
+		type: "agent_end",
+		messages: [
+			{
+				...assistantMessage(""),
+				stopReason: "error",
+				errorMessage: "OpenRouter request failed",
+			},
+		],
+		willRetry: false,
+	});
+
+	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "idle");
+
+	expect(deliveries).toContain("Error: OpenRouter request failed");
+});
+
 test("steers the same session when a follow-up arrives during work", async () => {
 	const store = createMockStore([userMessage("Analyze the draft.")]);
 	const session = createMockSession();
