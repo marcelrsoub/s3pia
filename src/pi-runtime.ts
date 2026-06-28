@@ -477,6 +477,8 @@ function createPiCustomTools(
 		promptSnippet: "Send a proactive update to the user",
 		promptGuidelines: [
 			"Use send_user_message when you need to share progress, a partial answer, a clarification, or a concise result before the run is completely finished.",
+			"If the user should see an image, screenshot, chart, or file, include the workspace path(s) in files; mentioning them in text is not enough.",
+			"Keep Telegram updates mobile-friendly: short paragraphs, bullets, numbered steps, and one idea per line.",
 			"Do not use send_user_message for internal reasoning or to ask the user for missing information.",
 		],
 		parameters: Type.Object({
