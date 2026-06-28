@@ -10,7 +10,6 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { buildThreadState } from "./ai-tools.js";
 import {
 	type ConversationMetadata,
 	conversationStore,
@@ -23,6 +22,7 @@ import {
 	buildWorkspaceAttachment,
 	sendTelegramMessageToAdmin,
 } from "./telegram-client.js";
+import { buildThreadState } from "./thread-utils.js";
 import { workspacePath } from "./workspace.js";
 
 export type LiveRunStatus = "idle" | "running" | "blocked";

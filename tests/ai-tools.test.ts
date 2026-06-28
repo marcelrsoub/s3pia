@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { buildChunkedTextResult, buildThreadState } from "../src/ai-tools";
+import { buildChunkedTextResult, buildThreadState } from "../src/thread-utils";
 
 test("chunked text results expose offset metadata for large content", () => {
 	const result = buildChunkedTextResult("x".repeat(12000), 4000, {

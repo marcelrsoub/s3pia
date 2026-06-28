@@ -5,7 +5,7 @@ import {
 	getFallbackModelMetadata,
 	getOpenRouterModelRegistry,
 } from "../src/openrouter";
-import { buildThreadSnapshot, takeMessagesWithinBudget } from "../src/ai-tools";
+import { buildThreadSnapshot, takeMessagesWithinBudget } from "../src/thread-utils";
 import type { Message } from "../src/conversation";
 
 test("estimateTokens uses a conservative character heuristic", () => {
