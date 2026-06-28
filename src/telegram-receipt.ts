@@ -1,6 +1,3 @@
-import { generateText } from "ai";
-import { z } from "zod";
-import { createConfiguredLanguageModel } from "./model.js";
 import {
 	composeLiveTelegramAck,
 	type TelegramAckContext,
@@ -46,38 +43,7 @@ export interface TelegramReceiptResult {
 }
 
 export interface TelegramReceiptComposerOptions {
-	timeoutMs?: number;
-	generateIntake?: (
-		context: TelegramReceiptContext,
-		signal: AbortSignal,
-	) => Promise<string>;
 	fallbackAck?: (context: TelegramAckContext) => Promise<string>;
-}
-
-const IntakeSchema = z.object({
-	language: z.string().min(2).max(16),
-	messageKind: z.enum(["new_run", "live_update", "blocked_answer"]),
-	attachmentKind: z.enum([
-		"none",
-		"photo",
-		"document",
-		"video",
-		"audio",
-		"voice",
-		"file",
-	]),
-	understoodGoal: z.string().min(1).max(160),
-	nextStep: z.string().min(1).max(160),
-	reply: z.string().min(1).max(240),
-	missingInfo: z.string().max(160).nullable().optional(),
-});
-
-function sanitizeReceiptText(text: string): string | null {
-	const normalized = text.trim().replace(/\s+/g, " ");
-	if (!normalized) return null;
-	if (normalized.length > 240) return null;
-	if (normalized.includes("```")) return null;
-	return normalized;
 }
 
 function inferLanguageHeuristic(
@@ -177,91 +143,17 @@ export function classifyTelegramReceiptIntake(
 	return buildFallbackIntake(context, fallbackText);
 }
 
-async function generateReceiptIntake(
-	context: TelegramReceiptContext,
-	signal: AbortSignal,
-): Promise<string> {
-	const model = createConfiguredLanguageModel();
-	const result = await generateText({
-		model,
-		system: [
-			"You classify incoming Telegram messages for a personal AI assistant.",
-			"Return JSON only, with no markdown or prose outside the JSON.",
-			"Always keep the reply in the same language as the user's current message.",
-			"If the language is ambiguous, use preferredLanguage if provided, otherwise English.",
-			"When there is an active run, default to messageKind='live_update' unless the run is blocked and the message looks like an answer.",
-			"If there is no active run, use messageKind='new_run'.",
-			"The reply must be short, natural, and specific about what was received and what happens next.",
-		].join(" "),
-		prompt: JSON.stringify({
-			content: context.content,
-			attachmentKind: context.attachmentKind,
-			hasFileAttachment: context.hasFileAttachment,
-			isBusy: context.isBusy,
-			preferredLanguage: context.preferredLanguage || null,
-			activeRun: context.activeRun || null,
-			requiredShape: {
-				language: "BCP47-like short code such as en, pt, es",
-				messageKind: "new_run | live_update | blocked_answer",
-				attachmentKind:
-					"none | photo | document | video | audio | voice | file",
-				understoodGoal: "one short sentence",
-				nextStep: "one short sentence",
-				reply: "one short sentence in the user's language",
-				missingInfo: "optional short sentence or null",
-			},
-		}),
-		maxOutputTokens: 180,
-		temperature: 0.2,
-		maxRetries: 0,
-		abortSignal: signal,
-	});
-
-	return result.text;
-}
-
 export async function composeTelegramReceipt(
 	context: TelegramReceiptContext,
 	options: TelegramReceiptComposerOptions = {},
 ): Promise<TelegramReceiptResult> {
-	const timeoutMs = options.timeoutMs ?? 1_500;
-	const generateIntake = options.generateIntake ?? generateReceiptIntake;
 	const fallbackAck =
-		options.fallbackAck ??
-		((ackContext) =>
-			composeLiveTelegramAck(ackContext, {
-				timeoutMs: Math.min(750, timeoutMs),
-			}));
-	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-	try {
-		const raw = await generateIntake(context, controller.signal);
-		const parsed = IntakeSchema.parse(JSON.parse(raw));
-		const text = sanitizeReceiptText(parsed.reply);
-		if (!text) {
-			throw new Error("Invalid receipt text");
-		}
-
-		const intake: TelegramReceiptIntake = {
-			...parsed,
-			reply: text,
-		};
-		return {
-			text,
-			intake,
-			usedFallback: false,
-		};
-	} catch (err) {
-		console.warn("[TelegramReceipt] Falling back to generic ack:", err);
-		const fallbackText = await fallbackAck(context);
-		const intake = buildFallbackIntake(context, fallbackText);
-		return {
-			text: fallbackText,
-			intake,
-			usedFallback: true,
-		};
-	} finally {
-		clearTimeout(timer);
-	}
+		options.fallbackAck ?? ((ackContext) => composeLiveTelegramAck(ackContext));
+	const fallbackText = await fallbackAck(context);
+	const intake = buildFallbackIntake(context, fallbackText);
+	return {
+		text: fallbackText,
+		intake,
+		usedFallback: true,
+	};
 }

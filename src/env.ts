@@ -19,16 +19,6 @@ const SECRET_KEYS = new Set([
 	// Keys ending in _API_KEY or _TOKEN are treated as secret
 ]);
 
-const LEGACY_PROVIDER_KEYS = [
-	"AI_PROVIDER",
-	"ZAI_API_KEY",
-	"ANTHROPIC_API_KEY",
-	"OPENAI_API_KEY",
-	"DEEPSEEK_API_KEY",
-	"GROQ_API_KEY",
-	"GEMINI_API_KEY",
-] as const;
-
 /**
  * Check if a key is a secret
  */
@@ -665,31 +655,18 @@ export function getEnvStatus(): {
 	configured: boolean;
 	missingRequired: string[];
 	canStart: boolean;
-	legacyDetected: string[];
-	migrationMessage?: string;
 } {
 	const openrouterKey = process.env.OPENROUTER_API_KEY;
 	const model = process.env.AI_MODEL;
 	const missingRequired: string[] = [];
-	const legacyDetected = LEGACY_PROVIDER_KEYS.filter((key) => {
-		const value = process.env[key];
-		return Boolean(value && value.trim() !== "");
-	});
 
 	if (!openrouterKey) missingRequired.push("OPENROUTER_API_KEY");
 	if (!model) missingRequired.push("AI_MODEL");
-
-	const migrationMessage =
-		legacyDetected.length > 0 && missingRequired.length > 0
-			? "Direct providers are deprecated. Configure OPENROUTER_API_KEY and AI_MODEL."
-			: undefined;
 
 	return {
 		configured: missingRequired.length === 0,
 		missingRequired,
 		canStart: missingRequired.length === 0,
-		legacyDetected,
-		migrationMessage,
 	};
 }
 
@@ -704,9 +681,6 @@ export function validateEnv(): { valid: boolean; errors: string[] } {
 		errors.push(
 			`Missing required settings: ${status.missingRequired.join(", ")}`,
 		);
-	}
-	if (status.migrationMessage) {
-		errors.push(status.migrationMessage);
 	}
 
 	return { valid: errors.length === 0, errors };

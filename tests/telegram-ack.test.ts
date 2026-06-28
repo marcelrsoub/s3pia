@@ -38,7 +38,7 @@ test("sends live acks for long messages and file messages", () => {
 	).toBe(true);
 });
 
-test("uses generated ack text when the model output is usable", async () => {
+test("uses a provided static ack when configured", async () => {
 	const ack = await composeLiveTelegramAck(
 		{
 			content: "Long request text".repeat(20),
@@ -46,14 +46,14 @@ test("uses generated ack text when the model output is usable", async () => {
 			isBusy: false,
 		},
 		{
-			generate: async () => "I'm on it. I'll take a look now.",
+			fallbackMessage: "I'm on it. I'll take a look now.",
 		},
 	);
 
 	expect(ack).toBe("I'm on it. I'll take a look now.");
 });
 
-test("falls back to a pooled reply when the generated ack is unusable", async () => {
+test("selects a pooled reply when no static ack is configured", async () => {
 	const fallback = await composeLiveTelegramAck(
 		{
 			content: "Long request text".repeat(20),
@@ -61,7 +61,6 @@ test("falls back to a pooled reply when the generated ack is unusable", async ()
 			isBusy: false,
 		},
 		{
-			generate: async () => "Queued and waiting for the queue to clear.",
 			fallbackMessages: [
 				"I'm on it. I'll take a look now.",
 				"Got it. I'm checking this now.",
@@ -72,19 +71,16 @@ test("falls back to a pooled reply when the generated ack is unusable", async ()
 	expect(fallback).toBe("Got it. I'm checking this now.");
 });
 
-test("falls back to the provided static message when asked", async () => {
-	const fallbackOnError = await composeLiveTelegramAck(
+test("prefers a provided static message over the pool", async () => {
+	const fallback = await composeLiveTelegramAck(
 		{
 			content: "Long request text".repeat(20),
 			hasFileAttachment: false,
 			isBusy: false,
 		},
 		{
-			generate: async () => {
-				throw new Error("boom");
-			},
 			fallbackMessage: "I'm on it. I'll reply when it's ready.",
 		},
 	);
-	expect(fallbackOnError).toBe("I'm on it. I'll reply when it's ready.");
+	expect(fallback).toBe("I'm on it. I'll reply when it's ready.");
 });

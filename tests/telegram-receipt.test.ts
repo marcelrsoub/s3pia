@@ -4,7 +4,7 @@ import {
 	composeTelegramReceipt,
 } from "../src/telegram-receipt";
 
-test("returns a contextual receipt in the generated language", async () => {
+test("returns a deterministic fallback receipt", async () => {
 	const result = await composeTelegramReceipt(
 		{
 			content: "Preciso que você revise este PDF e me diga os pontos principais.",
@@ -15,26 +15,17 @@ test("returns a contextual receipt in the generated language", async () => {
 			activeRun: null,
 		},
 		{
-			generateIntake: async () =>
-				JSON.stringify({
-					language: "pt",
-					messageKind: "new_run",
-					attachmentKind: "document",
-					understoodGoal: "Você quer uma revisão do PDF com os pontos principais.",
-					nextStep: "Vou ler a estrutura do arquivo primeiro e depois resumir.",
-					reply: "Recebi o PDF. Vou ler a estrutura primeiro e depois te resumo os pontos principais.",
-					missingInfo: null,
-				}),
+			fallbackAck: async () => "I'm on it. I'll take a look now.",
 		},
 	);
 
-	expect(result.usedFallback).toBe(false);
+	expect(result.usedFallback).toBe(true);
 	expect(result.intake.language).toBe("pt");
 	expect(result.intake.messageKind).toBe("new_run");
-	expect(result.text).toContain("Recebi o PDF");
+	expect(result.text).toBe("I'm on it. I'll take a look now.");
 });
 
-test("falls back to the generic ack pool when intake fails", async () => {
+test("uses the generic ack pool for active run receipts", async () => {
 	const result = await composeTelegramReceipt(
 		{
 			content: "Long request text".repeat(20),
@@ -48,9 +39,6 @@ test("falls back to the generic ack pool when intake fails", async () => {
 			},
 		},
 		{
-			generateIntake: async () => {
-				throw new Error("boom");
-			},
 			fallbackAck: async () => "I'm on it. I'll take a look now.",
 		},
 	);

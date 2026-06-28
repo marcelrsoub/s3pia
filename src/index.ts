@@ -54,24 +54,10 @@ console.log(" Environment variables loaded");
 // Check required env vars
 const requiredEnvVars = ["OPENROUTER_API_KEY", "AI_MODEL"];
 const missingVars = requiredEnvVars.filter((key) => !process.env[key]);
-const legacyProviderKeys = [
-	"AI_PROVIDER",
-	"ZAI_API_KEY",
-	"ANTHROPIC_API_KEY",
-	"OPENAI_API_KEY",
-	"DEEPSEEK_API_KEY",
-	"GROQ_API_KEY",
-	"GEMINI_API_KEY",
-];
-const legacyConfigured = legacyProviderKeys.filter((key) => process.env[key]);
 
 if (missingVars.length > 0) {
 	console.log("\n SETUP REQUIRED");
 	console.log(`   Missing: ${missingVars.join(", ")}`);
-	if (legacyConfigured.length > 0) {
-		console.log("   Direct providers are deprecated.");
-		console.log("   Configure OPENROUTER_API_KEY and AI_MODEL instead.");
-	}
 	console.log(`   Add to /app/ws/config/.env and restart`);
 } else {
 	console.log(" Configuration loaded");

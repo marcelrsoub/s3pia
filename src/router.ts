@@ -268,7 +268,6 @@ export async function handleHealth(): Promise<Response> {
 export async function handleAIStatus(): Promise<Response> {
 	const model = getEnvVar("AI_MODEL") || "";
 	const hasKey = !!getEnvVar("OPENROUTER_API_KEY");
-	const envStatus = getEnvStatus();
 	const metadata = hasKey && model ? await getActiveModelMetadata() : null;
 
 	let errorMessage: string | undefined;
@@ -276,8 +275,6 @@ export async function handleAIStatus(): Promise<Response> {
 		errorMessage = "No OpenRouter API key configured";
 	} else if (!model && hasKey) {
 		errorMessage = "No model configured";
-	} else if (envStatus.migrationMessage) {
-		errorMessage = envStatus.migrationMessage;
 	}
 
 	return createSuccessResponse({
@@ -287,7 +284,6 @@ export async function handleAIStatus(): Promise<Response> {
 		hasAuthError: !hasKey && !!model,
 		errorMessage,
 		metadata,
-		legacyDetected: envStatus.legacyDetected,
 	});
 }
 

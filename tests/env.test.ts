@@ -56,17 +56,13 @@ test("getEnvSummary returns list of env vars", async () => {
 	expect(Array.isArray(summary)).toBe(true);
 });
 
-test("env status requires OpenRouter config and reports legacy migration guidance", () => {
+test("env status requires OpenRouter config", () => {
 	process.env.OPENROUTER_API_KEY = "";
 	process.env.AI_MODEL = "";
-	process.env.AI_PROVIDER = "zai";
-	process.env.ZAI_API_KEY = "legacy";
 
 	const status = getEnvStatus();
 	expect(status.configured).toBe(false);
 	expect(status.missingRequired).toContain("OPENROUTER_API_KEY");
-	expect(status.legacyDetected).toContain("AI_PROVIDER");
-	expect(status.migrationMessage).toContain("Direct providers are deprecated");
 });
 
 test("getEnvVar retrieves value from process.env", () => {
