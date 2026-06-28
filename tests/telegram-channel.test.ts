@@ -254,6 +254,60 @@ test("routes short idle messages straight to the agent", async () => {
 	}
 });
 
+test("aborts the active Telegram poll when stopping", async () => {
+	const previousFetch = globalThis.fetch;
+	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;
+	process.env.ADMIN_TELEGRAM_ID = "1";
+
+	let aborted = false;
+	let fetchCalls = 0;
+
+	globalThis.fetch = (async (
+		_input: Parameters<typeof fetch>[0],
+		init?: Parameters<typeof fetch>[1],
+	) => {
+		fetchCalls += 1;
+		const signal = init?.signal;
+		if (!signal) {
+			throw new Error("Missing abort signal");
+		}
+
+		return await new Promise<Response>((_resolve, reject) => {
+			signal.addEventListener(
+				"abort",
+				() => {
+					aborted = true;
+					reject(signal.reason ?? new Error("Aborted"));
+				},
+				{ once: true },
+			);
+		});
+	}) as typeof fetch;
+
+	try {
+		const channel = new TelegramChannel({
+			enabled: true,
+			allowFrom: ["1"],
+			token: "test-token",
+		});
+
+		const startPromise = channel.start();
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		await channel.stop();
+		await startPromise;
+
+		expect(fetchCalls).toBe(1);
+		expect(aborted).toBe(true);
+	} finally {
+		globalThis.fetch = previousFetch;
+		if (previousAdminId === undefined) {
+			delete process.env.ADMIN_TELEGRAM_ID;
+		} else {
+			process.env.ADMIN_TELEGRAM_ID = previousAdminId;
+		}
+	}
+});
+
 test("restores the last processed Telegram update id from persisted metadata", async () => {
 	const previousMetadata = conversationStore.getMetadata(
 		TELEGRAM_CONVERSATION_ID,

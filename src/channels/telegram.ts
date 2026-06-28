@@ -137,6 +137,8 @@ export class TelegramChannel {
 	private pollTimer: ReturnType<typeof setInterval> | null = null;
 	private lastUpdateId = 0;
 	private isPolling = false;
+	private pollAbortController: AbortController | null = null;
+	private activePoll: Promise<void> | null = null;
 
 	constructor(config: TelegramChannelConfig) {
 		this.token = config.token;
@@ -180,7 +182,9 @@ export class TelegramChannel {
 		}, 11_000);
 
 		await this.pollUpdates();
-		console.log("[Telegram] Bot started");
+		if (this.started) {
+			console.log("[Telegram] Bot started");
+		}
 	}
 
 	async stop(): Promise<void> {
@@ -189,6 +193,12 @@ export class TelegramChannel {
 			this.pollTimer = null;
 		}
 		this.started = false;
+		this.pollAbortController?.abort(
+			new Error("Telegram polling stopped"),
+		);
+		if (this.activePoll) {
+			await this.activePoll.catch(() => undefined);
+		}
 		console.log("[Telegram] Bot stopped");
 	}
 
@@ -224,35 +234,54 @@ export class TelegramChannel {
 	}
 
 	private async pollUpdates(): Promise<void> {
-		if (this.isPolling) return;
+		if (this.isPolling || !this.started) return;
 		this.isPolling = true;
+		const controller = new AbortController();
+		this.pollAbortController = controller;
+		const poll = (async () => {
+			try {
+				const url = `https://api.telegram.org/bot${this.token}/getUpdates?offset=${this.lastUpdateId + 1}&timeout=10`;
+				const response = await fetch(url, {
+					signal: controller.signal,
+				});
+				const data = (await response.json()) as {
+					ok: boolean;
+					description?: string;
+					result?: TelegramUpdate[];
+				};
+
+				if (!data.ok) {
+					console.error("[Telegram] API error:", data.description);
+					return;
+				}
+
+				const updates = data.result || [];
+				for (const update of updates) {
+					await this.processUpdate(update);
+					this.lastUpdateId = update.update_id;
+					conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
+						telegramLastProcessedUpdateId: this.lastUpdateId,
+					});
+				}
+			} catch (err) {
+				if (!controller.signal.aborted) {
+					console.error("[Telegram] Poll error:", err);
+				}
+			} finally {
+				if (this.pollAbortController === controller) {
+					this.pollAbortController = null;
+				}
+				this.isPolling = false;
+			}
+		})();
+		this.activePoll = poll;
 
 		try {
-			const url = `https://api.telegram.org/bot${this.token}/getUpdates?offset=${this.lastUpdateId + 1}&timeout=10`;
-			const response = await fetch(url);
-			const data = (await response.json()) as {
-				ok: boolean;
-				description?: string;
-				result?: TelegramUpdate[];
-			};
-
-			if (!data.ok) {
-				console.error("[Telegram] API error:", data.description);
-				return;
-			}
-
-			const updates = data.result || [];
-			for (const update of updates) {
-				await this.processUpdate(update);
-				this.lastUpdateId = update.update_id;
-				conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
-					telegramLastProcessedUpdateId: this.lastUpdateId,
-				});
-			}
-		} catch (err) {
-			console.error("[Telegram] Poll error:", err);
+			await poll;
 		} finally {
-			this.isPolling = false;
+			if (this.activePoll === poll) {
+				this.activePoll = null;
+			}
 		}
 	}
 
