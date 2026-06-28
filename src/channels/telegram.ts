@@ -10,7 +10,11 @@ import {
 	TELEGRAM_CONVERSATION_ID,
 } from "../conversation.js";
 import { getEnvVar } from "../env.js";
-import { formatLiveRunAge, getLiveRunCoordinator } from "../live-run.js";
+import {
+	formatLiveRunAge,
+	getLiveRunCoordinator,
+	type LiveRunTriggerKind,
+} from "../live-run.js";
 import { shouldSendLiveAck } from "../telegram-ack.js";
 import { sendTelegramMessageToAdmin } from "../telegram-client.js";
 import {
@@ -111,7 +115,20 @@ function buildStatusMessage() {
 			.join("\n");
 	}
 
-	return "No live run is active.";
+	return ["Live run: idle", "Send a message and I’ll start one here."].join(
+		"\n",
+	);
+}
+
+function mapReceiptKindToTriggerKind(
+	messageKind: string,
+	liveStatus: "idle" | "running" | "blocked",
+): LiveRunTriggerKind {
+	if (messageKind === "blocked_answer") {
+		return "blocked_answer";
+	}
+
+	return liveStatus === "idle" ? "new_run" : "live_update";
 }
 
 export class TelegramChannel {
@@ -347,8 +364,7 @@ export class TelegramChannel {
 			lastIntakeGoal: receipt.intake.understoodGoal,
 		});
 
-		const shouldSendReceipt =
-			shouldAck || receipt.intake.messageKind === "status_check";
+		const shouldSendReceipt = shouldAck;
 		if (shouldSendReceipt) {
 			console.log(
 				`[Telegram] Live receipt sent (${receipt.usedFallback ? "fallback" : "contextual"}): ${receipt.intake.messageKind}`,
@@ -356,14 +372,13 @@ export class TelegramChannel {
 			await this.sendRawMessage(message.chat.id, receipt.text);
 		}
 
-		if (receipt.intake.messageKind === "status_check") {
-			return;
-		}
-
 		coordinator.requestRun({
 			conversationId: TELEGRAM_CONVERSATION_ID,
 			source: "telegram",
-			kind: receipt.intake.messageKind,
+			kind: mapReceiptKindToTriggerKind(
+				receipt.intake.messageKind,
+				liveSnapshot.status,
+			),
 			preview: summarizeLiveRunPreview(content),
 		});
 	}
@@ -431,7 +446,7 @@ export class TelegramChannel {
 				chatId,
 				cancelled
 					? `Cancelled the current run: ${summarizeLiveRunPreview(cancelled.preview)}`
-					: "No live run is active.",
+					: "No live run is active. Send a message to start one.",
 			);
 			return;
 		}

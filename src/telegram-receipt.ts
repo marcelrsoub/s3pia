@@ -190,7 +190,7 @@ function buildFallbackIntake(
 					? activeRun.status === "blocked"
 						? "I’m waiting for your answer to continue."
 						: "I’m still working on the current run."
-					: "No live run is active."
+					: "I’m here. Send me what you want me to work on."
 				: fallbackText,
 		missingInfo: null,
 	};
