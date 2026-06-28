@@ -611,6 +611,29 @@ function createSessionContextSnapshot(state: LiveRunState): LiveRunSummary {
 	});
 }
 
+async function deliverFinalAssistantResponse(
+	conversationId: string,
+	state: LiveRunState,
+	deliverer: TelegramDeliverer,
+	store: LiveRunConversationStore,
+	responseText: string,
+): Promise<boolean> {
+	if (state.turnResponseDelivered) {
+		return false;
+	}
+
+	// Claim the final reply before awaiting Telegram so a concurrent agent_end
+	// can't send the same text a second time.
+	state.turnResponseDelivered = true;
+
+	const delivered = await deliverer(responseText, []);
+	if (delivered) {
+		store.addMessage(conversationId, "assistant", responseText, "telegram");
+	}
+
+	return delivered;
+}
+
 export class LiveRunCoordinator {
 	private readonly store: LiveRunConversationStore;
 	private readonly sessionFactory: NonNullable<
@@ -1032,16 +1055,13 @@ export class LiveRunCoordinator {
 					`[LiveRun] Assistant turn ended with error: ${assistantFailureText}`,
 				);
 			}
-			const delivered = await this.deliverer(responseText, []);
-			if (delivered) {
-				state.turnResponseDelivered = true;
-				this.store.addMessage(
-					conversationId,
-					"assistant",
-					responseText,
-					"telegram",
-				);
-			}
+			await deliverFinalAssistantResponse(
+				conversationId,
+				state,
+				this.deliverer,
+				this.store,
+				responseText,
+			);
 		}
 
 		state.usedSendUserMessage = false;
@@ -1087,16 +1107,13 @@ export class LiveRunCoordinator {
 						`[LiveRun] Agent ended with error: ${assistantFailureText}`,
 					);
 				}
-				const delivered = await this.deliverer(responseText, []);
-				if (delivered) {
-					state.turnResponseDelivered = true;
-					this.store.addMessage(
-						conversationId,
-						"assistant",
-						responseText,
-						"telegram",
-					);
-				}
+				await deliverFinalAssistantResponse(
+					conversationId,
+					state,
+					this.deliverer,
+					this.store,
+					responseText,
+				);
 			}
 		}
 
