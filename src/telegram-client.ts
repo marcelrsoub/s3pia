@@ -43,7 +43,8 @@ function normalizeTelegramMarkdownStructure(text: string): string {
 	const normalized: string[] = [];
 	let inCodeFence = false;
 
-	for (const line of lines) {
+	for (let index = 0; index < lines.length; index += 1) {
+		const line = lines[index];
 		const trimmed = line.trimStart();
 		const isFence = trimmed.startsWith("```");
 		if (isFence) {
@@ -54,6 +55,27 @@ function normalizeTelegramMarkdownStructure(text: string): string {
 
 		if (inCodeFence) {
 			normalized.push(line);
+			continue;
+		}
+
+		const nextLine = lines[index + 1];
+		if (
+			nextLine &&
+			isMarkdownTableRow(line) &&
+			isMarkdownTableSeparatorLine(nextLine)
+		) {
+			const tableLines = [line, nextLine];
+			let cursor = index + 2;
+			while (cursor < lines.length && isMarkdownTableRow(lines[cursor])) {
+				tableLines.push(lines[cursor]);
+				cursor += 1;
+			}
+
+			const renderedTable = renderTelegramTableBlock(tableLines);
+			normalized.push("```");
+			normalized.push(renderedTable);
+			normalized.push("```");
+			index = cursor - 1;
 			continue;
 		}
 
@@ -81,6 +103,65 @@ function normalizeTelegramMarkdownStructure(text: string): string {
 	}
 
 	return normalized.join("\n");
+}
+
+function splitMarkdownTableCells(line: string): string[] {
+	let trimmed = line.trim();
+	if (trimmed.startsWith("|")) {
+		trimmed = trimmed.slice(1);
+	}
+	if (trimmed.endsWith("|")) {
+		trimmed = trimmed.slice(0, -1);
+	}
+
+	return trimmed.split("|").map((cell) => cell.trim());
+}
+
+function isMarkdownTableRow(line: string): boolean {
+	const trimmed = line.trim();
+	if (!trimmed.includes("|")) return false;
+	const cells = splitMarkdownTableCells(trimmed);
+	return cells.length >= 2 && cells.some((cell) => cell.length > 0);
+}
+
+function isMarkdownTableSeparatorLine(line: string): boolean {
+	const cells = splitMarkdownTableCells(line);
+	if (cells.length < 2) return false;
+	return cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function renderTelegramTableBlock(lines: string[]): string {
+	const rows = [lines[0], ...lines.slice(2)].map((line) =>
+		splitMarkdownTableCells(line),
+	);
+	const columnCount = Math.max(...rows.map((row) => row.length));
+	const normalizedRows = rows.map((row) => {
+		const copy = [...row];
+		while (copy.length < columnCount) {
+			copy.push("");
+		}
+		return copy;
+	});
+
+	const widths = Array.from({ length: columnCount }, (_, columnIndex) =>
+		Math.max(
+			3,
+			...normalizedRows.map((row) => row[columnIndex]?.length ?? 0),
+		),
+	);
+
+	const formatRow = (row: string[]): string =>
+		row.map((cell, columnIndex) => cell.padEnd(widths[columnIndex])).join(" | ");
+
+	const separator = widths.map((width) => "-".repeat(width)).join(" | ");
+	const [header, ...dataRows] = normalizedRows;
+	const renderedRows = [
+		formatRow(header),
+		separator,
+		...dataRows.map((row) => formatRow(row)),
+	];
+
+	return renderedRows.join("\n");
 }
 
 function splitLongTelegramParagraph(

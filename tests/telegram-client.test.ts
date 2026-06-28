@@ -151,6 +151,65 @@ test("formats headings and bullet lists for Telegram HTML", async () => {
 	}
 });
 
+test("renders markdown tables as aligned preformatted blocks", async () => {
+	const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;
+	const originalFetch = globalThis.fetch;
+	let sentMessage: { chat_id: number; text: string; parse_mode?: string } | null =
+		null;
+
+	process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+	process.env.ADMIN_TELEGRAM_ID = "123";
+
+	globalThis.fetch = (async (input, init) => {
+		const url = String(input);
+		if (url.includes("/sendMessage")) {
+			sentMessage = JSON.parse(String(init?.body)) as {
+				chat_id: number;
+				text: string;
+				parse_mode?: string;
+			};
+			return new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+		throw new Error(`Unexpected fetch: ${url}`);
+	}) as typeof fetch;
+
+	try {
+		const result = await sendTelegramMessageToAdmin(
+			"| Name | Score |\n| --- | --- |\n| Alice | 10 |\n| Bob | 3 |",
+		);
+
+		expect(result.messageDelivered).toBe(true);
+		if (!sentMessage) {
+			throw new Error("Expected a Telegram payload");
+		}
+		const payload = sentMessage as {
+			chat_id: number;
+			text: string;
+			parse_mode?: string;
+		};
+		expect(payload.parse_mode).toBe("HTML");
+		expect(payload.text).toContain(
+			"<pre>Name  | Score\n----- | -----\nAlice | 10   \nBob   | 3    \n</pre>",
+		);
+	} finally {
+		globalThis.fetch = originalFetch;
+		if (previousToken === undefined) {
+			delete process.env.TELEGRAM_BOT_TOKEN;
+		} else {
+			process.env.TELEGRAM_BOT_TOKEN = previousToken;
+		}
+		if (previousAdminId === undefined) {
+			delete process.env.ADMIN_TELEGRAM_ID;
+		} else {
+			process.env.ADMIN_TELEGRAM_ID = previousAdminId;
+		}
+	}
+});
+
 test("escapes model output while preserving Telegram HTML entities", async () => {
 	const previousToken = process.env.TELEGRAM_BOT_TOKEN;
 	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;
