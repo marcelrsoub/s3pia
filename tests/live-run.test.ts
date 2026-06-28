@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
 	type LiveConversationSession,
 	LiveRunCoordinator,
+	normalizeLegacySessionAssistantContent,
 } from "../src/live-run";
 import type { ConversationMetadata, Message } from "../src/conversation";
 
@@ -44,6 +46,32 @@ function assistantMessage(content: string): Message {
 		content,
 		timestamp: Date.now(),
 		source: "telegram",
+	};
+}
+
+function legacyAssistantSessionMessage(content: string) {
+	return {
+		role: "assistant",
+		content,
+		api: "openrouter",
+		provider: "openrouter",
+		model: "deepseek/deepseek-v4-pro",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				total: 0,
+			},
+		},
+		stopReason: "stop",
+		timestamp: Date.now(),
 	};
 }
 
@@ -335,6 +363,46 @@ test("surfaces assistant errors when the agent ends without text", async () => {
 	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "idle");
 
 	expect(deliveries).toContain("Error: OpenRouter request failed");
+});
+
+test("repairs legacy assistant session content before resuming Pi", () => {
+	const session = SessionManager.inMemory();
+	session.appendMessage(
+		{
+			role: "user",
+			content: "Hi",
+			timestamp: Date.now(),
+		} as Parameters<SessionManager["appendMessage"]>[0],
+	);
+	session.appendMessage(
+		legacyAssistantSessionMessage(
+			"I'm here, send me what you want me to work on.",
+		) as Parameters<SessionManager["appendMessage"]>[0],
+	);
+
+	const migrated = normalizeLegacySessionAssistantContent(session);
+
+	expect(migrated).toBe(true);
+	const assistantEntry = session.getEntries().find((entry) => {
+		if (entry.type !== "message") {
+			return false;
+		}
+		return entry.message.role === "assistant";
+	});
+	if (!assistantEntry || assistantEntry.type !== "message") {
+		throw new Error("Expected a migrated assistant message entry");
+	}
+	if (assistantEntry.message.role !== "assistant") {
+		throw new Error("Expected an assistant message entry");
+	}
+	const assistantMessage = assistantEntry.message as { content: unknown };
+	expect(Array.isArray(assistantMessage.content)).toBe(true);
+	expect(assistantMessage.content).toEqual([
+		{
+			type: "text",
+			text: "I'm here, send me what you want me to work on.",
+		},
+	]);
 });
 
 test("steers the same session when a follow-up arrives during work", async () => {

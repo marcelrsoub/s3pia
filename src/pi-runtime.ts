@@ -1,5 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
+import { getModel as getBuiltinModel } from "@earendil-works/pi-ai/compat";
 import {
 	type AgentSessionEvent,
 	createAgentSession,
@@ -8,7 +9,6 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { getModel as getBuiltinModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { buildThreadState } from "./ai-tools.js";
 import {
@@ -330,6 +330,12 @@ function shouldClearWorkspaceCacheFromToolResult(event: {
 	return typeof path === "string" && isWorkspaceContextFile(path);
 }
 
+function toAssistantTextContent(
+	text: string,
+): Array<{ type: "text"; text: string }> {
+	return text.trim().length > 0 ? [{ type: "text", text }] : [];
+}
+
 function seedConversationHistory(
 	sessionManager: SessionManager,
 	messages: Message[],
@@ -342,7 +348,17 @@ function seedConversationHistory(
 		if (message.role === "worker") {
 			sessionManager.appendMessage({
 				role: "assistant",
-				content: `[Worker ${message.workerType || "task"}${message.workerStatus ? `:${message.workerStatus}` : ""}]\n${message.content}`,
+				content: toAssistantTextContent(
+					`[Worker ${message.workerType || "task"}${message.workerStatus ? `:${message.workerStatus}` : ""}]\n${message.content}`,
+				),
+			} as unknown as Parameters<SessionManager["appendMessage"]>[0]);
+			continue;
+		}
+
+		if (message.role === "assistant") {
+			sessionManager.appendMessage({
+				role: "assistant",
+				content: toAssistantTextContent(message.content),
 			} as unknown as Parameters<SessionManager["appendMessage"]>[0]);
 			continue;
 		}
@@ -352,6 +368,48 @@ function seedConversationHistory(
 			content: message.content,
 		} as unknown as Parameters<SessionManager["appendMessage"]>[0]);
 	}
+}
+
+export function normalizeLegacySessionAssistantContent(
+	sessionManager: SessionManager,
+): boolean {
+	const sessionFile = sessionManager.getSessionFile();
+	const entries = sessionManager.getEntries();
+	let migrated = false;
+
+	for (const entry of entries) {
+		if (entry.type !== "message") {
+			continue;
+		}
+
+		const message = entry.message as {
+			role?: string;
+			content?: unknown;
+		};
+
+		if (message.role !== "assistant" || typeof message.content !== "string") {
+			continue;
+		}
+
+		message.content = toAssistantTextContent(message.content);
+		migrated = true;
+	}
+
+	if (!migrated) {
+		return false;
+	}
+
+	if (sessionManager.isPersisted() && sessionFile) {
+		const header = sessionManager.getHeader();
+		if (header) {
+			const serialized = [header, ...entries]
+				.map((entry) => JSON.stringify(entry))
+				.join("\n");
+			writeFileSync(sessionFile, `${serialized}\n`);
+		}
+	}
+
+	return true;
 }
 
 function resolveDefaultModelSelection(): {
@@ -752,15 +810,15 @@ export class LiveRunCoordinator {
 			store: this.store,
 		})
 			.then((session) => {
-			state.session = session;
-			state.sessionFile = session.sessionFile;
-			state.id = session.sessionId || state.id;
-			console.log(
-				`[LiveRun] Pi session ready: ${session.sessionId}${session.sessionFile ? ` (${session.sessionFile})` : ""}`,
-			);
-			writeActiveRunMetadata(this.store, conversationId, state);
-			state.unsubscribe = session.subscribe((event) => {
-				void this.handleSessionEvent(
+				state.session = session;
+				state.sessionFile = session.sessionFile;
+				state.id = session.sessionId || state.id;
+				console.log(
+					`[LiveRun] Pi session ready: ${session.sessionId}${session.sessionFile ? ` (${session.sessionFile})` : ""}`,
+				);
+				writeActiveRunMetadata(this.store, conversationId, state);
+				state.unsubscribe = session.subscribe((event) => {
+					void this.handleSessionEvent(
 						conversationId,
 						state,
 						session,
@@ -1100,6 +1158,8 @@ export class LiveRunCoordinator {
 			state.sessionFile && existsSync(state.sessionFile)
 				? SessionManager.open(state.sessionFile, PI_SESSION_DIR, PI_WORKSPACE)
 				: SessionManager.continueRecent(PI_WORKSPACE, PI_SESSION_DIR);
+
+		normalizeLegacySessionAssistantContent(sessionManager);
 
 		seedConversationHistory(
 			sessionManager,
