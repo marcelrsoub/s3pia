@@ -112,7 +112,7 @@ interface LiveRunState {
 	startedAt?: number;
 	updatedAt?: number;
 	rerunRequested: boolean;
-	usedSendUserMessage: boolean;
+	usedSendMessage: boolean;
 	turnResponseDelivered: boolean;
 	session: LiveConversationSession | null;
 	sessionLoading: Promise<LiveConversationSession> | null;
@@ -468,20 +468,18 @@ function createPiCustomTools(
 		},
 	});
 
-	const buildSendUserMessageTool = (
-		name: "send_message" | "send_user_message",
-	) =>
+	const buildSendMessageTool = () =>
 		defineTool({
-			name,
-			label: name === "send_message" ? "Send Message" : "Send User Message",
+			name: "send_message",
+			label: "Send Message",
 			description:
 				"Send a proactive Telegram update to the user while the live run is still working.",
 			promptSnippet: "Send a proactive update to the user",
 			promptGuidelines: [
-				`Use ${name} when you need to share progress, a partial answer, a clarification, or a concise result before the run is completely finished.`,
+				"Use send_message when you need to share progress, a partial answer, a clarification, or a concise result before the run is completely finished.",
 				"If the user should see an image, screenshot, chart, or file, include the workspace path(s) in files; mentioning them in text is not enough.",
 				"Keep Telegram updates mobile-friendly: short paragraphs, bullets, numbered steps, and one idea per line.",
-				`Do not use ${name} for internal reasoning or to ask the user for missing information.`,
+				"Do not use send_message for internal reasoning or to ask the user for missing information.",
 			],
 			parameters: Type.Object({
 				message: Type.String({
@@ -520,7 +518,7 @@ function createPiCustomTools(
 				);
 
 				if (result) {
-					state.usedSendUserMessage = true;
+					state.usedSendMessage = true;
 					store.addMessage(
 						conversationId,
 						"assistant",
@@ -600,12 +598,7 @@ function createPiCustomTools(
 		},
 	});
 
-	return [
-		refreshThreadTool,
-		buildSendUserMessageTool("send_message"),
-		buildSendUserMessageTool("send_user_message"),
-		askUserTool,
-	];
+	return [refreshThreadTool, buildSendMessageTool(), askUserTool];
 }
 
 function createSessionContextSnapshot(state: LiveRunState): LiveRunSummary {
@@ -735,7 +728,7 @@ export class LiveRunCoordinator {
 
 		const summary = createSessionContextSnapshot(state);
 		state.rerunRequested = false;
-		state.usedSendUserMessage = false;
+		state.usedSendMessage = false;
 		state.status = "idle";
 		state.question = undefined;
 		state.startedAt = undefined;
@@ -795,7 +788,7 @@ export class LiveRunCoordinator {
 				activeRun?.status === "blocked" ? activeRun.startedAt : undefined,
 			updatedAt: activeRun?.updatedAt || Date.now(),
 			rerunRequested: false,
-			usedSendUserMessage: false,
+			usedSendMessage: false,
 			turnResponseDelivered: false,
 			session: null,
 			sessionLoading: null,
@@ -949,7 +942,7 @@ export class LiveRunCoordinator {
 				const now = Date.now();
 				state.startedAt ??= now;
 				state.updatedAt = now;
-				state.usedSendUserMessage = false;
+				state.usedSendMessage = false;
 				state.turnResponseDelivered = false;
 				writeActiveRunMetadata(this.store, conversationId, state);
 				break;
@@ -989,10 +982,7 @@ export class LiveRunCoordinator {
 						  }
 						| undefined;
 
-					if (
-						pendingTool.toolName === "send_user_message" ||
-						pendingTool.toolName === "send_message"
-					) {
+					if (pendingTool.toolName === "send_message") {
 						const delivered =
 							result?.delivered ??
 							result?.messageDelivered ??
@@ -1000,7 +990,7 @@ export class LiveRunCoordinator {
 							result?.details?.messageDelivered ??
 							false;
 						if (delivered) {
-							state.usedSendUserMessage = true;
+							state.usedSendMessage = true;
 						}
 					}
 
@@ -1057,7 +1047,7 @@ export class LiveRunCoordinator {
 
 		if (
 			state.status !== "blocked" &&
-			!state.usedSendUserMessage &&
+			!state.usedSendMessage &&
 			!hasPendingMessages &&
 			(assistantText || assistantFailureText)
 		) {
@@ -1076,7 +1066,7 @@ export class LiveRunCoordinator {
 			);
 		}
 
-		state.usedSendUserMessage = false;
+		state.usedSendMessage = false;
 		state.updatedAt = Date.now();
 
 		if (state.status !== "blocked" && !hasPendingMessages) {
@@ -1101,7 +1091,7 @@ export class LiveRunCoordinator {
 
 		if (
 			state.status !== "blocked" &&
-			!state.usedSendUserMessage &&
+			!state.usedSendMessage &&
 			!state.turnResponseDelivered &&
 			!hasPendingMessages
 		) {
@@ -1129,7 +1119,7 @@ export class LiveRunCoordinator {
 			}
 		}
 
-		state.usedSendUserMessage = false;
+		state.usedSendMessage = false;
 		state.updatedAt = Date.now();
 
 		if (state.status !== "blocked" && !hasPendingMessages) {
