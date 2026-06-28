@@ -382,13 +382,44 @@ export class TelegramChannel {
 		if (command === "/help") {
 			await this.sendRawMessage(
 				chatId,
-				"Available commands: /start, /help, /status, /cancel, /stop",
+				"Available commands: /start, /help, /steer, /cancel, /stop",
 			);
 			return;
 		}
 
 		if (command === "/status") {
 			await this.sendRawMessage(chatId, buildStatusMessage());
+			return;
+		}
+
+		if (command === "/steer") {
+			const steerText = text.slice(command.length).trim();
+			if (!steerText) {
+				await this.sendRawMessage(
+					chatId,
+					"Use /steer followed by a short instruction for the current live run.",
+				);
+				return;
+			}
+
+			conversationStore.addMessage(
+				TELEGRAM_CONVERSATION_ID,
+				"user",
+				steerText,
+				"telegram",
+			);
+
+			getLiveRunCoordinator().requestRun({
+				conversationId: TELEGRAM_CONVERSATION_ID,
+				source: "manual",
+				kind: "steer",
+				preview: summarizeLiveRunPreview(steerText),
+			});
+
+			await this.sendRawMessage(
+				chatId,
+				`Steering the current live run: ${summarizeLiveRunPreview(steerText)}`,
+			);
 			return;
 		}
 

@@ -115,7 +115,7 @@ export function TelegramStatusCard({
 						<CardTitle>
 							<div className="flex items-center gap-2">
 								<RadioTower className="h-5 w-5" />
-								<span className="font-retro text-lg">TELEGRAM STATUS</span>
+								<span className="font-retro text-lg">LIVE RUN</span>
 							</div>
 						</CardTitle>
 						<CardDescription>

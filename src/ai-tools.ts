@@ -90,13 +90,6 @@ export interface ThreadStateStore {
 					activeRunQuestion?: string;
 					activeRunStartedAt?: number;
 					activeRunUpdatedAt?: number;
-					activeTaskId?: number;
-					activeTaskSourceKey?: string;
-					activeTaskStatus?: string;
-					activeTaskPreview?: string;
-					activeTaskQuestion?: string;
-					activeTaskStartedAt?: number;
-					activeTaskUpdatedAt?: number;
 				};
 				lastActivity: number;
 		  }
@@ -207,44 +200,26 @@ export function buildThreadState(
 ): ThreadStateSnapshot {
 	const conversation = store.get(conversationId);
 	const metadata = conversation?.metadata || {};
-	const activeRunStatus = [
-		metadata.activeRunStatus,
-		metadata.activeTaskStatus,
-	].find(
-		(value): value is "running" | "blocked" =>
-			value === "running" || value === "blocked",
-	);
-	const legacyRunMetadata = activeRunStatus !== undefined;
+	const activeRunStatus =
+		metadata.activeRunStatus === "running" ||
+		metadata.activeRunStatus === "blocked"
+			? metadata.activeRunStatus
+			: undefined;
 	const checkpointAt =
 		sinceTimestamp ??
 		metadata.activeRunUpdatedAt ??
 		metadata.activeRunStartedAt ??
-		(legacyRunMetadata
-			? (metadata.activeTaskUpdatedAt ?? metadata.activeTaskStartedAt)
-			: undefined) ??
 		conversation?.lastActivity ??
 		0;
 	const activeRun = activeRunStatus
 		? {
-				id:
-					metadata.activeRunId ||
-					(legacyRunMetadata ? metadata.activeTaskId?.toString() : undefined),
-				source:
-					metadata.activeRunSource ||
-					(legacyRunMetadata ? "telegram" : undefined),
+				id: metadata.activeRunId,
+				source: metadata.activeRunSource,
 				status: activeRunStatus,
-				preview:
-					metadata.activeRunPreview ||
-					(legacyRunMetadata ? metadata.activeTaskPreview : undefined),
-				question:
-					metadata.activeRunQuestion ||
-					(legacyRunMetadata ? metadata.activeTaskQuestion : undefined),
-				startedAt:
-					metadata.activeRunStartedAt ||
-					(legacyRunMetadata ? metadata.activeTaskStartedAt : undefined),
-				updatedAt:
-					metadata.activeRunUpdatedAt ||
-					(legacyRunMetadata ? metadata.activeTaskUpdatedAt : undefined),
+				preview: metadata.activeRunPreview,
+				question: metadata.activeRunQuestion,
+				startedAt: metadata.activeRunStartedAt,
+				updatedAt: metadata.activeRunUpdatedAt,
 			}
 		: null;
 
@@ -281,25 +256,13 @@ export function buildThreadState(
 			lastIntakeKind: metadata.lastIntakeKind,
 			lastIntakeNextStep: metadata.lastIntakeNextStep,
 			lastIntakeGoal: metadata.lastIntakeGoal,
-			activeRunId:
-				metadata.activeRunId ||
-				(legacyRunMetadata ? metadata.activeTaskId?.toString() : undefined),
-			activeRunSource:
-				metadata.activeRunSource ||
-				(legacyRunMetadata ? "telegram" : undefined),
+			activeRunId: metadata.activeRunId,
+			activeRunSource: metadata.activeRunSource,
 			activeRunStatus: activeRunStatus,
-			activeRunPreview:
-				metadata.activeRunPreview ||
-				(legacyRunMetadata ? metadata.activeTaskPreview : undefined),
-			activeRunQuestion:
-				metadata.activeRunQuestion ||
-				(legacyRunMetadata ? metadata.activeTaskQuestion : undefined),
-			activeRunStartedAt:
-				metadata.activeRunStartedAt ||
-				(legacyRunMetadata ? metadata.activeTaskStartedAt : undefined),
-			activeRunUpdatedAt:
-				metadata.activeRunUpdatedAt ||
-				(legacyRunMetadata ? metadata.activeTaskUpdatedAt : undefined),
+			activeRunPreview: metadata.activeRunPreview,
+			activeRunQuestion: metadata.activeRunQuestion,
+			activeRunStartedAt: metadata.activeRunStartedAt,
+			activeRunUpdatedAt: metadata.activeRunUpdatedAt,
 		},
 		activeRun,
 		recentMessages,

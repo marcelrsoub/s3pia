@@ -22,14 +22,8 @@ export interface ConversationMetadata {
 	activeRunQuestion?: string;
 	activeRunStartedAt?: number;
 	activeRunUpdatedAt?: number;
-	// Legacy fields retained for existing workspace metadata.
-	activeTaskId?: number;
-	activeTaskSourceKey?: string;
-	activeTaskStatus?: "queued" | "running" | "blocked" | "completed" | "failed";
-	activeTaskPreview?: string;
-	activeTaskQuestion?: string;
-	activeTaskStartedAt?: number;
-	activeTaskUpdatedAt?: number;
+	piSessionFile?: string;
+	piSessionId?: string;
 }
 
 export interface Message {

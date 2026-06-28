@@ -1,12 +1,16 @@
 import { expect, test } from "bun:test";
-import { LiveRunCoordinator } from "../src/live-run";
+import {
+	type LiveConversationSession,
+	LiveRunCoordinator,
+} from "../src/live-run";
 import type { ConversationMetadata, Message } from "../src/conversation";
-import type { ExecutionResult } from "../src/memory";
 
-function waitFor(
-	check: () => boolean,
-	timeoutMs = 2_000,
-): Promise<void> {
+type MockEvent = {
+	type: string;
+	[key: string]: unknown;
+};
+
+function waitFor(check: () => boolean, timeoutMs = 2_000): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	return new Promise((resolve, reject) => {
 		const tick = async () => {
@@ -25,12 +29,31 @@ function waitFor(
 	});
 }
 
+function userMessage(content: string): Message {
+	return {
+		role: "user",
+		content,
+		timestamp: Date.now(),
+		source: "telegram",
+	};
+}
+
+function assistantMessage(content: string): Message {
+	return {
+		role: "assistant",
+		content,
+		timestamp: Date.now(),
+		source: "telegram",
+	};
+}
+
 function createMockStore(initialMessages: Message[] = []) {
 	const conversations = new Map<
 		string,
 		{
 			metadata: ConversationMetadata;
 			messages: Message[];
+			lastActivity: number;
 		}
 	>();
 
@@ -40,6 +63,7 @@ function createMockStore(initialMessages: Message[] = []) {
 			conversation = {
 				metadata: {},
 				messages: [],
+				lastActivity: Date.now(),
 			};
 			conversations.set(id, conversation);
 		}
@@ -48,12 +72,16 @@ function createMockStore(initialMessages: Message[] = []) {
 
 	const seed = ensureConversation("telegram");
 	seed.messages.push(...initialMessages);
+	seed.lastActivity = seed.messages.at(-1)?.timestamp ?? Date.now();
 
 	return {
 		get(id: string) {
 			const conversation = conversations.get(id);
 			if (!conversation) return undefined;
-			return { metadata: conversation.metadata };
+			return {
+				metadata: conversation.metadata,
+				lastActivity: conversation.lastActivity,
+			};
 		},
 		create(id: string) {
 			return { metadata: ensureConversation(id).metadata };
@@ -61,15 +89,27 @@ function createMockStore(initialMessages: Message[] = []) {
 		getMetadata(conversationId: string) {
 			return ensureConversation(conversationId).metadata;
 		},
+		getRecentMessages(conversationId: string, limit = 8) {
+			return ensureConversation(conversationId).messages
+				.slice(-Math.max(0, limit));
+		},
+		getMessagesSince(conversationId: string, sinceTimestamp: number) {
+			return ensureConversation(conversationId).messages.filter(
+				(message) => message.timestamp >= sinceTimestamp,
+			);
+		},
+		getMessagesForAI(conversationId: string) {
+			return ensureConversation(conversationId).messages.filter(
+				(message) => message.role !== "worker" || message.workerStatus !== "failed",
+			);
+		},
 		updateMetadata(
 			conversationId: string,
 			metadata: Partial<ConversationMetadata>,
 		) {
 			const conversation = ensureConversation(conversationId);
 			conversation.metadata = { ...conversation.metadata, ...metadata };
-		},
-		getMessagesForAI(conversationId: string) {
-			return [...ensureConversation(conversationId).messages];
+			conversation.lastActivity = Date.now();
 		},
 		addMessage(
 			conversationId: string,
@@ -80,7 +120,8 @@ function createMockStore(initialMessages: Message[] = []) {
 			workerStatus?: "started" | "completed" | "failed",
 			files?: Message["files"],
 		) {
-			ensureConversation(conversationId).messages.push({
+			const conversation = ensureConversation(conversationId);
+			const message: Message = {
 				role,
 				content,
 				timestamp: Date.now(),
@@ -88,39 +129,83 @@ function createMockStore(initialMessages: Message[] = []) {
 				workerType,
 				workerStatus,
 				files,
-			});
+			};
+			conversation.messages.push(message);
+			conversation.lastActivity = message.timestamp;
+		},
+	};
+}
+
+function createMockSession(): LiveConversationSession & {
+	emit(event: MockEvent): void;
+	sendUserMessageCalls: Array<{
+		content: string;
+		options?: { deliverAs?: "steer" | "followUp" };
+	}>;
+	steerCalls: string[];
+	followUpCalls: string[];
+	abortCalls: number;
+	clearQueueCalls: number;
+} {
+	const listeners = new Set<(event: MockEvent) => void>();
+
+	return {
+		sessionId: "mock-session-1",
+		sessionFile: "/tmp/mock.pi",
+		isStreaming: false,
+		pendingMessageCount: 0,
+		sendUserMessageCalls: [],
+		steerCalls: [],
+		followUpCalls: [],
+		abortCalls: 0,
+		clearQueueCalls: 0,
+		subscribe(listener) {
+			listeners.add(listener as (event: MockEvent) => void);
+			return () => listeners.delete(listener as (event: MockEvent) => void);
+		},
+		async sendUserMessage(content, options) {
+			this.sendUserMessageCalls.push({ content, options });
+		},
+		async steer(text) {
+			this.steerCalls.push(text);
+		},
+		async followUp(text) {
+			this.followUpCalls.push(text);
+		},
+		async abort() {
+			this.abortCalls += 1;
+			this.isStreaming = false;
+			this.pendingMessageCount = 0;
+		},
+		clearQueue() {
+			this.clearQueueCalls += 1;
+			this.pendingMessageCount = 0;
+			return {
+				steering: [],
+				followUp: [],
+			};
+		},
+		getLastAssistantText() {
+			return undefined;
+		},
+		dispose() {},
+		emit(event: MockEvent) {
+			for (const listener of listeners) {
+				listener(event);
+			}
 		},
 	};
 }
 
 test("suppresses the duplicate final blast when send_message already spoke", async () => {
 	const store = createMockStore([
-		{
-			role: "user",
-			content: "Please summarize the attached notes.",
-			timestamp: Date.now() - 1_000,
-			source: "telegram",
-		},
+		userMessage("Please summarize the attached notes."),
 	]);
-
+	const session = createMockSession();
 	const deliveries: string[] = [];
-	let releaseRun: () => void = () => {};
-	const started = new Promise<void>((resolve) => {
-		releaseRun = resolve;
-	});
 	const coordinator = new LiveRunCoordinator({
 		store,
-		executor: async (task) => {
-			await started;
-			return {
-				task,
-				result: "Final summary",
-				actions: [],
-				iterations: 1,
-				duration: 25,
-				usedSendMessage: true,
-			} satisfies ExecutionResult;
-		},
+		sessionFactory: async () => session,
 		deliverer: async (text) => {
 			deliveries.push(text);
 			return true;
@@ -134,52 +219,126 @@ test("suppresses the duplicate final blast when send_message already spoke", asy
 		preview: "Please summarize the attached notes.",
 	});
 
-	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "running");
-	releaseRun();
+	await waitFor(() => session.sendUserMessageCalls.length === 1);
+	session.emit({ type: "turn_start" });
+	session.emit({
+		type: "tool_execution_start",
+		toolCallId: "tool-1",
+		toolName: "send_user_message",
+		args: { message: "Working on it." },
+	});
+	session.emit({
+		type: "tool_execution_end",
+		toolCallId: "tool-1",
+		toolName: "send_user_message",
+		result: {
+			content: [{ type: "text", text: "Delivered the update to Telegram." }],
+			details: { delivered: true },
+		},
+		isError: false,
+	});
+	session.emit({
+		type: "turn_end",
+		message: assistantMessage("Final summary"),
+		toolResults: [],
+	});
+
 	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "idle");
 
+	expect(session.sendUserMessageCalls).toHaveLength(1);
 	expect(deliveries).toHaveLength(0);
 	expect(coordinator.getStatusSnapshot("telegram").currentRun).toBeNull();
 });
 
-test("resumes a blocked run in the same conversation after an answer arrives", async () => {
-	const store = createMockStore([
-		{
-			role: "user",
-			content: "Update the report.",
-			timestamp: Date.now() - 2_000,
-			source: "telegram",
-		},
-	]);
+test("steers the same session when a follow-up arrives during work", async () => {
+	const store = createMockStore([userMessage("Analyze the draft.")]);
+	const session = createMockSession();
 
-	const prompts: string[] = [];
-	let callCount = 0;
+	const coordinator = new LiveRunCoordinator({
+		store,
+		sessionFactory: async () => session,
+		deliverer: async () => true,
+	});
+
+	coordinator.requestRun({
+		conversationId: "telegram",
+		source: "telegram",
+		kind: "new_run",
+		preview: "Analyze the draft.",
+	});
+
+	await waitFor(() => session.sendUserMessageCalls.length === 1);
+	session.emit({ type: "turn_start" });
+	session.isStreaming = true;
+	session.pendingMessageCount = 1;
+
+	coordinator.requestRun({
+		conversationId: "telegram",
+		source: "telegram",
+		kind: "live_update",
+		preview: "Actually focus on section 2.",
+	});
+
+	await waitFor(() => session.steerCalls.length === 1);
+	expect(session.steerCalls[0]).toContain("section 2");
+	expect(coordinator.getStatusSnapshot("telegram").rerunRequested).toBe(true);
+
+	session.isStreaming = false;
+	session.pendingMessageCount = 0;
+	session.emit({ type: "queue_update", steering: [], followUp: [] });
+	session.emit({
+		type: "turn_end",
+		message: assistantMessage("Updated the draft"),
+		toolResults: [],
+	});
+
+	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "idle");
+
+	expect(session.sendUserMessageCalls).toHaveLength(1);
+	expect(session.steerCalls).toHaveLength(1);
+	expect(coordinator.getStatusSnapshot("telegram").currentRun).toBeNull();
+});
+
+test("uses the operator steer path while the run is busy", async () => {
+	const store = createMockStore([userMessage("Review the report.")]);
+	const session = createMockSession();
+	const coordinator = new LiveRunCoordinator({
+		store,
+		sessionFactory: async () => session,
+		deliverer: async () => true,
+	});
+
+	coordinator.requestRun({
+		conversationId: "telegram",
+		source: "telegram",
+		kind: "new_run",
+		preview: "Review the report.",
+	});
+
+	await waitFor(() => session.sendUserMessageCalls.length === 1);
+	session.emit({ type: "turn_start" });
+	session.isStreaming = true;
+	session.pendingMessageCount = 1;
+
+	coordinator.requestRun({
+		conversationId: "telegram",
+		source: "manual",
+		kind: "steer",
+		preview: "Focus on the executive summary.",
+	});
+
+	await waitFor(() => session.steerCalls.length === 1);
+	expect(session.steerCalls[0]).toContain("executive summary");
+	expect(coordinator.getStatusSnapshot("telegram").rerunRequested).toBe(true);
+});
+
+test("resumes a blocked run in the same conversation after an answer arrives", async () => {
+	const store = createMockStore([userMessage("Update the report.")]);
+	const session = createMockSession();
 	const deliveries: string[] = [];
 	const coordinator = new LiveRunCoordinator({
 		store,
-		executor: async (task) => {
-			callCount += 1;
-			prompts.push(task);
-			if (callCount === 1) {
-				return {
-					task,
-					result: "Need the target filename.",
-					blocked: true,
-					question: "Which file should I edit?",
-					actions: [],
-					iterations: 1,
-					duration: 20,
-				} satisfies ExecutionResult;
-			}
-
-			return {
-				task,
-				result: "updated file-b.txt",
-				actions: [],
-				iterations: 1,
-				duration: 20,
-			} satisfies ExecutionResult;
-		},
+		sessionFactory: async () => session,
 		deliverer: async (text) => {
 			deliveries.push(text);
 			return true;
@@ -193,14 +352,38 @@ test("resumes a blocked run in the same conversation after an answer arrives", a
 		preview: "Update the report.",
 	});
 
-	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "blocked");
+	await waitFor(() => session.sendUserMessageCalls.length === 1);
+	session.emit({ type: "turn_start" });
+	session.emit({
+		type: "tool_execution_start",
+		toolCallId: "tool-ask",
+		toolName: "ask_user",
+		args: { question: "Which file should I edit?" },
+	});
+	session.emit({
+		type: "tool_execution_end",
+		toolCallId: "tool-ask",
+		toolName: "ask_user",
+		result: {
+			content: [{ type: "text", text: "I asked the user and am waiting." }],
+			details: {
+				blocked: true,
+				question: "Which file should I edit?",
+			},
+		},
+		isError: false,
+	});
+	session.emit({
+		type: "turn_end",
+		message: assistantMessage("Need the target filename."),
+		toolResults: [],
+	});
 
-	store.addMessage(
-		"telegram",
-		"user",
-		"Use file B instead.",
-		"telegram",
+	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "blocked");
+	expect(coordinator.getStatusSnapshot("telegram").currentRun?.question).toBe(
+		"Which file should I edit?",
 	);
+
 	coordinator.requestRun({
 		conversationId: "telegram",
 		source: "telegram",
@@ -208,47 +391,28 @@ test("resumes a blocked run in the same conversation after an answer arrives", a
 		preview: "Use file B instead.",
 	});
 
+	await waitFor(() => session.sendUserMessageCalls.length === 2);
+	expect(session.sendUserMessageCalls[1]?.content).toContain("Use file B instead.");
+
+	session.emit({ type: "turn_start" });
+	session.emit({
+		type: "turn_end",
+		message: assistantMessage("updated file-b.txt"),
+		toolResults: [],
+	});
+
 	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "idle");
 
-	expect(callCount).toBe(2);
-	expect(prompts[1]).toContain("Use file B instead.");
-	expect(deliveries[0]).toContain("Which file should I edit?");
+	expect(deliveries).toContain("updated file-b.txt");
 	expect(coordinator.getStatusSnapshot("telegram").currentRun).toBeNull();
 });
 
 test("cancels a running live run and clears the active status", async () => {
-	const store = createMockStore([
-		{
-			role: "user",
-			content: "Keep working on the draft.",
-			timestamp: Date.now() - 1_000,
-			source: "telegram",
-		},
-	]);
-
-	let resolveAbort: (result: ExecutionResult) => void = () => {};
+	const store = createMockStore([userMessage("Keep working on the draft.")]);
+	const session = createMockSession();
 	const coordinator = new LiveRunCoordinator({
 		store,
-		executor: async (task, _history, abortSignal) =>
-			new Promise<ExecutionResult>((resolve) => {
-				resolveAbort = resolve;
-				abortSignal?.addEventListener("abort", () => {
-					resolve({
-						task,
-						result: "Error: Run cancelled by user",
-						actions: [],
-						iterations: 0,
-						duration: 0,
-						incomplete: true,
-						usedSendMessage: false,
-						error: {
-							type: "api_error",
-							message: "Run cancelled by user",
-							provider: "openrouter",
-						},
-					});
-				});
-			}),
+		sessionFactory: async () => session,
 		deliverer: async () => true,
 	});
 
@@ -259,25 +423,15 @@ test("cancels a running live run and clears the active status", async () => {
 		preview: "Keep working on the draft.",
 	});
 
+	await waitFor(() => session.sendUserMessageCalls.length === 1);
+	session.emit({ type: "turn_start" });
 	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "running");
+
 	const cancelled = coordinator.cancelActiveRun("telegram");
 	expect(cancelled?.status).toBe("running");
 
-	resolveAbort({
-		task: "Keep working on the draft.",
-		result: "Error: Run cancelled by user",
-		actions: [],
-		iterations: 0,
-		duration: 0,
-		incomplete: true,
-		usedSendMessage: false,
-		error: {
-			type: "api_error",
-			message: "Run cancelled by user",
-			provider: "openrouter",
-		},
-	});
-
+	await waitFor(() => session.abortCalls === 1);
+	expect(session.clearQueueCalls).toBe(1);
 	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "idle");
 	expect(coordinator.getStatusSnapshot("telegram").currentRun).toBeNull();
 });
