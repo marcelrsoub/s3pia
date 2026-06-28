@@ -2,12 +2,11 @@
  * CLI Commands
  *
  * Command-line interface for SepiaBot.
- * Provides direct interaction with the agent without running the full gateway.
+ * Provides status and gateway controls for the Telegram-first runtime.
  *
  * Inspired by nanobot: https://github.com/HKUDS/nanobot
  */
 
-import { Agent } from "../agent.js";
 import {
 	getAllEnvVarsWithMetadata,
 	getEnvStatus,
@@ -17,30 +16,6 @@ import {
 } from "../env.js";
 import { getGateway } from "../gateway/manager.js";
 import { getActiveModelMetadata } from "../openrouter.js";
-
-/**
- * Agent command - interact with the agent directly
- */
-export async function agentCommand(message: string): Promise<void> {
-	console.log(`[CLI] Processing: "${message}"`);
-
-	const agent = new Agent();
-	const result = await agent.execute(message);
-
-	if (result.blocked) {
-		console.log(`[CLI] Blocked: ${result.question}`);
-		return;
-	}
-
-	if (result.incomplete) {
-		console.log(`[CLI] Incomplete (max iterations reached)`);
-	}
-
-	console.log(`[CLI] Result:\n${result.result}`);
-	console.log(
-		`\n[CLI] Iterations: ${result.iterations}, Duration: ${result.duration}ms`,
-	);
-}
 
 /**
  * Status command - show system status
@@ -214,15 +189,6 @@ export async function executeCli(): Promise<void> {
 	const command = args[0];
 
 	switch (command) {
-		case "agent": {
-			const message = args[1];
-			if (!message) {
-				console.log("Usage: agent <message>");
-				return;
-			}
-			await agentCommand(message);
-			break;
-		}
 		case "status": {
 			await statusCommand();
 			break;
@@ -246,13 +212,11 @@ SepiaBot CLI
 Usage: bun run src/cli/index.ts <command> [args...]
 
 Commands:
-  agent <message>       Send a message to the agent
   status                Show system status
 	  config <get|set|validate> [key] [value]  Manage configuration
 	  gateway <start|stop|status|restart>  Control the Telegram gateway
 
 Examples:
-  bun run src/cli/index.ts agent "What is 2+2?"
   bun run src/cli/index.ts status
   bun run src/cli/index.ts config get AI_MODEL
   bun run src/cli/index.ts gateway start
