@@ -87,3 +87,64 @@ test("treats a sent text as delivered even if an attachment upload fails", async
 		}
 	}
 });
+
+test("formats headings and bullet lists for Telegram markdown", async () => {
+	const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;
+	const originalFetch = globalThis.fetch;
+	let sentMessage: { chat_id: number; text: string; parse_mode?: string } | null =
+		null;
+
+	process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+	process.env.ADMIN_TELEGRAM_ID = "123";
+
+	globalThis.fetch = (async (input, init) => {
+		const url = String(input);
+		if (url.includes("/sendMessage")) {
+			sentMessage = JSON.parse(String(init?.body)) as {
+				chat_id: number;
+				text: string;
+				parse_mode?: string;
+			};
+			return new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+		throw new Error(`Unexpected fetch: ${url}`);
+	}) as typeof fetch;
+
+	try {
+		const result = await sendTelegramMessageToAdmin(
+			"# Summary\n\n- first item\n- second item\n\nUse `file.txt` and [docs](https://example.com).",
+		);
+
+		expect(result.messageDelivered).toBe(true);
+		if (!sentMessage) {
+			throw new Error("Expected a Telegram payload");
+		}
+		const payload = sentMessage as {
+			chat_id: number;
+			text: string;
+			parse_mode?: string;
+		};
+		expect(payload.parse_mode).toBe("MarkdownV2");
+		expect(payload.text).toContain("*Summary*");
+		expect(payload.text).toContain("• first item");
+		expect(payload.text).toContain("• second item");
+		expect(payload.text).toContain("`file.txt`");
+		expect(payload.text).toContain("[docs](https://example.com)");
+	} finally {
+		globalThis.fetch = originalFetch;
+		if (previousToken === undefined) {
+			delete process.env.TELEGRAM_BOT_TOKEN;
+		} else {
+			process.env.TELEGRAM_BOT_TOKEN = previousToken;
+		}
+		if (previousAdminId === undefined) {
+			delete process.env.ADMIN_TELEGRAM_ID;
+		} else {
+			process.env.ADMIN_TELEGRAM_ID = previousAdminId;
+		}
+	}
+});

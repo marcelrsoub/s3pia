@@ -111,14 +111,14 @@ test("copies missing default skills into an existing workspace", async () => {
 });
 
 test("copies workspace docs but never seeds architecture policy into the workspace", async () => {
+	const templateBootstrap = `${TEMPLATE_ROOT}/BOOTSTRAP.md`;
 	const templateArchitecture = `${TEMPLATE_ROOT}/ARCHITECTURE.md`;
-	const templateUxContract = `${TEMPLATE_ROOT}/UX_CONTRACT.md`;
+	const workspaceBootstrap = `${WORKSPACE_ROOT}/BOOTSTRAP.md`;
 	const workspaceArchitecture = `${WORKSPACE_ROOT}/ARCHITECTURE.md`;
-	const workspaceUxContract = `${WORKSPACE_ROOT}/UX_CONTRACT.md`;
 
 	const { env, files } = createMemoryWorkspaceSyncEnvironment({
+		[templateBootstrap]: "# Bootstrap\n",
 		[templateArchitecture]: "# Architecture\n",
-		[templateUxContract]: "# UX Contract\n",
 	});
 
 	const result = await syncDefaultWorkspaceFiles(
@@ -127,10 +127,10 @@ test("copies workspace docs but never seeds architecture policy into the workspa
 		env,
 	);
 
-	expect(result.copiedFiles).toContain("UX_CONTRACT.md");
+	expect(result.copiedFiles).toContain("BOOTSTRAP.md");
 	expect(result.copiedFiles).not.toContain("ARCHITECTURE.md");
+	expect(files.get(resolve(workspaceBootstrap))).toBe("# Bootstrap\n");
 	expect(files.has(resolve(workspaceArchitecture))).toBe(false);
-	expect(files.get(resolve(workspaceUxContract))).toBe("# UX Contract\n");
 });
 
 test("does not overwrite an existing skill file", async () => {

@@ -18,7 +18,7 @@ export interface SendTelegramResult {
 	warnings: string[];
 }
 
-const TELEGRAM_MESSAGE_LIMIT = 4000;
+const TELEGRAM_MESSAGE_CHUNK_LIMIT = 3600;
 const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
 
 function getTelegramBotToken(): string | null {
@@ -38,7 +38,183 @@ function getTelegramApiUrl(method: string): string | null {
 	return `https://api.telegram.org/bot${token}/${method}`;
 }
 
+function normalizeTelegramMarkdownStructure(text: string): string {
+	const lines = text.replace(/\r\n/g, "\n").split("\n");
+	const normalized: string[] = [];
+	let inCodeFence = false;
+
+	for (const line of lines) {
+		const trimmed = line.trimStart();
+		const isFence = trimmed.startsWith("```");
+		if (isFence) {
+			inCodeFence = !inCodeFence;
+			normalized.push(line);
+			continue;
+		}
+
+		if (inCodeFence) {
+			normalized.push(line);
+			continue;
+		}
+
+		const heading = line.match(/^(#{1,6})\s+(.*)$/);
+		if (heading) {
+			const title = heading[2]?.trim() ?? "";
+			normalized.push(title.length > 0 ? `**${title}**` : "");
+			continue;
+		}
+
+		const bullet = line.match(/^(\s*)[-*+]\s+(.*)$/);
+		if (bullet) {
+			const indent = bullet[1] ?? "";
+			const item = bullet[2]?.trim() ?? "";
+			normalized.push(`${indent}• ${item}`);
+			continue;
+		}
+
+		if (/^\s*(?:---+|\*\*\*+|___+)\s*$/.test(line)) {
+			normalized.push("");
+			continue;
+		}
+
+		normalized.push(line);
+	}
+
+	return normalized.join("\n");
+}
+
+function splitLongTelegramParagraph(
+	paragraph: string,
+	maxChars: number,
+): string[] {
+	if (paragraph.length <= maxChars) {
+		return [paragraph];
+	}
+
+	const lines = paragraph.split("\n");
+	const chunks: string[] = [];
+	let current = "";
+
+	for (const line of lines) {
+		if (current.length === 0) {
+			if (line.length <= maxChars) {
+				current = line;
+				continue;
+			}
+
+			for (let offset = 0; offset < line.length; offset += maxChars) {
+				chunks.push(line.slice(offset, offset + maxChars));
+			}
+			continue;
+		}
+
+		const candidate = `${current}\n${line}`;
+		if (candidate.length <= maxChars) {
+			current = candidate;
+			continue;
+		}
+
+		chunks.push(current);
+		current = "";
+
+		if (line.length <= maxChars) {
+			current = line;
+			continue;
+		}
+
+		for (let offset = 0; offset < line.length; offset += maxChars) {
+			chunks.push(line.slice(offset, offset + maxChars));
+		}
+	}
+
+	if (current.length > 0) {
+		chunks.push(current);
+	}
+
+	return chunks;
+}
+
+function splitTelegramTextIntoChunks(
+	text: string,
+	maxChars = TELEGRAM_MESSAGE_CHUNK_LIMIT,
+): string[] {
+	const normalized = normalizeTelegramMarkdownStructure(text).trim();
+	if (!normalized) {
+		return [""];
+	}
+
+	const paragraphs: string[] = [];
+	let currentLines: string[] = [];
+	let inCodeFence = false;
+
+	const flushParagraph = (): void => {
+		if (currentLines.length === 0) {
+			return;
+		}
+		const paragraph = currentLines.join("\n").trimEnd();
+		if (paragraph.length > 0) {
+			paragraphs.push(paragraph);
+		}
+		currentLines = [];
+	};
+
+	for (const line of normalized.split("\n")) {
+		const trimmed = line.trimStart();
+		const isFence = trimmed.startsWith("```");
+		if (isFence) {
+			inCodeFence = !inCodeFence;
+			currentLines.push(line);
+			continue;
+		}
+
+		if (!inCodeFence && line.trim().length === 0) {
+			flushParagraph();
+			continue;
+		}
+
+		currentLines.push(line);
+	}
+
+	flushParagraph();
+
+	const chunks: string[] = [];
+	let current = "";
+
+	for (const paragraph of paragraphs) {
+		if (current.length === 0) {
+			if (paragraph.length <= maxChars) {
+				current = paragraph;
+			} else {
+				chunks.push(...splitLongTelegramParagraph(paragraph, maxChars));
+			}
+			continue;
+		}
+
+		const candidate = `${current}\n\n${paragraph}`;
+		if (candidate.length <= maxChars) {
+			current = candidate;
+			continue;
+		}
+
+		chunks.push(current);
+		current = "";
+
+		if (paragraph.length <= maxChars) {
+			current = paragraph;
+		} else {
+			chunks.push(...splitLongTelegramParagraph(paragraph, maxChars));
+		}
+	}
+
+	if (current.length > 0) {
+		chunks.push(current);
+	}
+
+	return chunks.length > 0 ? chunks : [""];
+}
+
 function convertToTelegramMarkdown(text: string): string {
+	const structuredText = normalizeTelegramMarkdownStructure(text);
 	const ALL_SPECIAL = /[_*[\]()~`>#+\-=|{}.!]/g;
 
 	interface ProtectedPart {
@@ -54,7 +230,7 @@ function convertToTelegramMarkdown(text: string): string {
 		return placeholder;
 	};
 
-	let result = text;
+	let result = structuredText;
 	result = result.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
 		const escapedCode = code.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
 		return protect(`\`\`\`${lang}\n${escapedCode}\`\`\``);
@@ -185,14 +361,7 @@ async function sendTelegramText(
 	text: string,
 	abortSignal?: AbortSignal,
 ): Promise<boolean> {
-	const chunks: string[] = [];
-	for (let index = 0; index < text.length; index += TELEGRAM_MESSAGE_LIMIT) {
-		chunks.push(text.slice(index, index + TELEGRAM_MESSAGE_LIMIT));
-	}
-	if (chunks.length === 0) {
-		chunks.push("");
-	}
-
+	const chunks = splitTelegramTextIntoChunks(text);
 	for (const chunk of chunks) {
 		const markdownMessage = convertToTelegramMarkdown(chunk);
 		const sent = await sendTelegramRawMessage(

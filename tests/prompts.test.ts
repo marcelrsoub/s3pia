@@ -13,9 +13,4 @@ test("includes a Docker runtime guardrail in the workspace context", async () =>
 	expect(context).toContain(
 		"cannot publish new host ports from inside the run",
 	);
-	expect(context).toContain(
-		"Talk like a capable human, not an internal dashboard or ticket system.",
-	);
-	expect(context).toContain("Treat follow-ups during active work as updates");
-	expect(context).toContain("## UX_CONTRACT");
 });

@@ -314,8 +314,7 @@ function isWorkspaceContextFile(path: string): boolean {
 		file === "BOOTSTRAP.md" ||
 		file === "IDENTITY.md" ||
 		file === "SOUL.md" ||
-		file === "USER.md" ||
-		file === "UX_CONTRACT.md"
+		file === "USER.md"
 	);
 }
 

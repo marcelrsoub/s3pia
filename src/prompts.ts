@@ -14,21 +14,8 @@ export function clearWorkspaceContextCache(): void {
 // Cache for workspace context files
 let cachedWorkspaceContext: string | null = null;
 
-const RUNTIME_UX_CONTRACT = `## UX_CONTRACT
-
-# UX Contract
-
-- Talk like a capable human, not an internal dashboard or ticket system.
-- Match the user's language and keep the tone warm, direct, and brief.
-- Give a tiny receipt only when it helps: long requests, attachments, or active work can get a brief "working on it" note.
-- Treat follow-ups during active work as updates to the current run unless they are clearly separate.
-- Keep internals hidden; do not ask the user to check tables or status dashboards.
-- For long work, use files, drafts, and checkpoints so the run can keep moving without a giant prompt.
-- If you are blocked, ask one clear question and stop.
-`;
-
 /**
- * Load workspace context files (BOOTSTRAP.md, IDENTITY.md, SOUL.md, USER.md, UX_CONTRACT.md).
+ * Load workspace context files (BOOTSTRAP.md, IDENTITY.md, SOUL.md, USER.md).
  * These are the agent-visible workspace seeds and mutable context.
  */
 export async function loadWorkspaceContext(): Promise<string> {
@@ -64,16 +51,6 @@ export async function loadWorkspaceContext(): Promise<string> {
 		} catch (_err) {
 			// File doesn't exist or can't be read, skip
 		}
-	}
-
-	const uxContractFile = Bun.file(`${WORKSPACE}/UX_CONTRACT.md`);
-	if (await uxContractFile.exists()) {
-		const content = await uxContractFile.text();
-		contextParts.push(`## UX_CONTRACT\n${content}`);
-		console.log("[Prompts] Loaded workspace context: UX_CONTRACT.md");
-	} else {
-		contextParts.push(RUNTIME_UX_CONTRACT);
-		console.log("[Prompts] Loaded UX_CONTRACT fallback");
 	}
 
 	contextParts.push(

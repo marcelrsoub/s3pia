@@ -23,7 +23,6 @@ const ROOT_TEMPLATE_FILES = [
 	"IDENTITY.md",
 	"SOUL.md",
 	"USER.md",
-	"UX_CONTRACT.md",
 ] as const;
 
 export const defaultWorkspaceSyncEnvironment: WorkspaceSyncEnvironment = {
