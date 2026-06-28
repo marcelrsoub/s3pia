@@ -10,6 +10,7 @@ import {
 	handleOpenRouterModels,
 	handleTelegramBotRestart,
 	handleTelegramBotStatus,
+	handleTelegramLiveRunCancel,
 	handleTestConfig,
 	handleTestOpenRouterKey,
 	handleUpdateConfig,
@@ -159,6 +160,9 @@ export function startServer() {
 			}
 			if (url.pathname === "/api/telegram/restart" && req.method === "POST") {
 				return handleTelegramBotRestart();
+			}
+			if (url.pathname === "/api/telegram/cancel" && req.method === "POST") {
+				return handleTelegramLiveRunCancel();
 			}
 
 			return new Response(JSON.stringify({ error: "Not Found" }), {

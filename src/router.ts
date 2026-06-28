@@ -4,6 +4,7 @@
  * Configuration, status, and Telegram management only.
  */
 
+import { TELEGRAM_CONVERSATION_ID } from "./conversation.js";
 import {
 	getAllEnvVarsWithMetadata,
 	getEnvFileContent,
@@ -16,6 +17,7 @@ import {
 	validateEnv,
 } from "./env.js";
 import { getGateway } from "./gateway/manager.js";
+import { getLiveRunCoordinator } from "./live-run.js";
 import {
 	getActiveModelMetadata,
 	getOpenRouterModelRegistry,
@@ -192,6 +194,9 @@ export async function handleTestConfig(request: Request): Promise<Response> {
 export async function handleTelegramBotStatus(): Promise<Response> {
 	const gateway = getGateway();
 	const telegramChannel = gateway.getTelegramChannel();
+	const snapshot = getLiveRunCoordinator().getStatusSnapshot(
+		TELEGRAM_CONVERSATION_ID,
+	);
 
 	if (!telegramChannel) {
 		return createSuccessResponse({
@@ -200,10 +205,39 @@ export async function handleTelegramBotStatus(): Promise<Response> {
 			running: false,
 			configured: false,
 			error: "Telegram channel not configured",
+			status: snapshot.status,
+			currentRun: snapshot.currentRun,
+			canCancel: snapshot.canCancel,
+			rerunRequested: snapshot.rerunRequested,
 		});
 	}
 
-	return createSuccessResponse(telegramChannel.getStatus());
+	return createSuccessResponse({
+		...telegramChannel.getStatus(),
+		configured: true,
+		status: snapshot.status,
+		currentRun: snapshot.currentRun,
+		canCancel: snapshot.canCancel,
+		rerunRequested: snapshot.rerunRequested,
+	});
+}
+
+export async function handleTelegramLiveRunCancel(): Promise<Response> {
+	const cancelledRun = getLiveRunCoordinator().cancelActiveRun(
+		TELEGRAM_CONVERSATION_ID,
+	);
+	if (!cancelledRun) {
+		return createSuccessResponse({
+			cancelled: false,
+			message: "No live run to cancel",
+		});
+	}
+
+	return createSuccessResponse({
+		cancelled: true,
+		currentRun: cancelledRun,
+		message: "Cancel request sent",
+	});
 }
 
 export async function handleTelegramBotRestart(): Promise<Response> {

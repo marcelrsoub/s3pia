@@ -7,8 +7,9 @@
  * Check interval: 10 minutes (aligned to :00/:10/:20/:30/:40/:50)
  */
 
+import { conversationStore, TELEGRAM_CONVERSATION_ID } from "./conversation.js";
+import { getLiveRunCoordinator } from "./live-run.js";
 import { clearWorkspaceContextCache } from "./prompts.js";
-import { getTaskQueue } from "./task-queue.js";
 import { workspacePath } from "./workspace.js";
 
 const TASKS_FILE = workspacePath("tasks", "scheduled.md");
@@ -265,32 +266,47 @@ export class HeartbeatScheduler {
 	 * Check for due tasks and execute them
 	 */
 	private async checkAndExecute(): Promise<void> {
-		console.log("[Heartbeat] Checking for due tasks...");
+		console.log("[Heartbeat] Checking for due work...");
 		const tasks = await this.parseTasksFile();
 		const now = new Date();
 		const tasksToUpdate: ScheduledTask[] = [];
 		const tasksToRemove: string[] = [];
+		const dueTasks: ScheduledTask[] = [];
 
 		for (const task of tasks) {
 			if (this.isTaskDue(task, now)) {
-				const queuedTask = this.queueTask(task);
-				if (queuedTask.status === "completed") {
-					if (task.runAt) {
-						tasksToRemove.push(task.name);
-					} else {
-						tasksToUpdate.push({ ...task, lastRun: now.toISOString() });
-					}
-				} else if (queuedTask.status === "failed") {
-					getTaskQueue().retry(queuedTask.sourceKey);
+				dueTasks.push(task);
+				if (task.runAt) {
+					tasksToRemove.push(task.name);
+				} else {
+					tasksToUpdate.push({ ...task, lastRun: now.toISOString() });
 				}
 			}
+		}
+
+		if (dueTasks.length > 0) {
+			const prompt = this.buildScheduledPrompt(dueTasks);
+			conversationStore.addMessage(
+				TELEGRAM_CONVERSATION_ID,
+				"worker",
+				prompt,
+				undefined,
+				"tool",
+				"started",
+			);
+			getLiveRunCoordinator().requestRun({
+				conversationId: TELEGRAM_CONVERSATION_ID,
+				source: "scheduled",
+				kind: "scheduled",
+				preview: prompt,
+			});
 		}
 
 		// Update file if needed
 		if (tasksToRemove.length > 0 || tasksToUpdate.length > 0) {
 			await this.updateTasksFile(tasksToUpdate, tasksToRemove);
 		} else {
-			console.log("[Heartbeat] No tasks due");
+			console.log("[Heartbeat] No scheduled work due");
 		}
 	}
 
@@ -342,23 +358,18 @@ export class HeartbeatScheduler {
 	}
 
 	/**
-	 * Execute a task using the Agent
+	 * Build a combined live-run prompt for all due scheduled work.
 	 */
-	private queueTask(task: ScheduledTask) {
-		const contextualizedAction = `[SCHEDULED TASK: ${task.name}]
+	private buildScheduledPrompt(tasks: ScheduledTask[]): string {
+		const lines = tasks
+			.map((task, index) => `${index + 1}. ${task.name}\n${task.action.trim()}`)
+			.join("\n\n");
+		return `[SCHEDULED WORK]
 
-This is an automated scheduled task. Complete it and notify the user.
+These scheduled items are due now. Handle them in the live thread and keep the user updated if needed.
 
-IMPORTANT: Use the send_message tool to deliver the final result to Telegram.
-
-Task:
-${task.action}`;
-		const dueKey = task.runAt || task.lastRun || "initial";
-		return getTaskQueue().enqueue({
-			kind: "scheduled",
-			sourceKey: `scheduled:${task.name}:${dueKey}`,
-			input: contextualizedAction,
-		}).task;
+Scheduled items:
+${lines}`;
 	}
 
 	/**

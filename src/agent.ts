@@ -12,6 +12,7 @@ import {
 	RetryError,
 	stepCountIs,
 } from "ai";
+import { createLinkedAbortController } from "./abort.js";
 import { aiTools } from "./ai-tools.js";
 import type { Message } from "./conversation.js";
 import { getEnvSummary } from "./env.js";
@@ -21,6 +22,8 @@ import { createConfiguredLanguageModel } from "./model.js";
 import { estimateTokens, getActiveModelBudget } from "./openrouter.js";
 import { loadWorkspaceContext } from "./prompts.js";
 import { getSkills } from "./skills.js";
+
+export const RUN_CANCELLED_MESSAGE = "Run cancelled by user";
 
 function summarizeActions(actions: Action[]): string | null {
 	if (actions.length === 0) return null;
@@ -128,7 +131,7 @@ export function compactText(text: string, maxChars: number): string {
 	return `${head}\n\n[...omitted ${text.length - head.length - tail.length} chars...]\n\n${tail}`;
 }
 
-export function buildTaskSnapshot(messages: Message[]): string | null {
+export function buildThreadSnapshot(messages: Message[]): string | null {
 	if (messages.length === 0) return null;
 	const recent = messages.slice(-12);
 	const lastUser = [...recent].reverse().find((msg) => msg.role === "user");
@@ -195,10 +198,11 @@ class Agent {
 	async execute(
 		task: string,
 		conversationHistory?: Message[],
+		abortSignal?: AbortSignal,
 	): Promise<ExecutionResult> {
 		const startTime = Date.now();
 
-		console.log(`[Agent] Starting task: "${task.slice(0, 100)}..."`);
+		console.log(`[Agent] Starting run: "${task.slice(0, 100)}..."`);
 
 		const systemPrompt = await this.buildSystemPrompt();
 
@@ -209,11 +213,12 @@ class Agent {
 			budget,
 		);
 
-		const abortController = new AbortController();
-		const timeoutId = setTimeout(
-			() => abortController.abort(),
-			this.config.maxTime,
-		);
+		const abortState = createLinkedAbortController({
+			abortSignal,
+			timeoutMs: this.config.maxTime,
+			abortReason: RUN_CANCELLED_MESSAGE,
+			timeoutReason: `Run exceeded the ${this.config.maxTime / 1000}s time limit`,
+		});
 
 		try {
 			const result = await generateText({
@@ -224,9 +229,8 @@ class Agent {
 				toolChoice: "auto",
 				stopWhen: stepCountIs(this.config.maxSteps),
 				maxRetries: 2,
-				abortSignal: abortController.signal,
+				abortSignal: abortState.controller.signal,
 			});
-			clearTimeout(timeoutId);
 
 			const actions: Action[] = [];
 			let usedSendMessage = false;
@@ -280,7 +284,7 @@ class Agent {
 
 			const finalResult: ExecutionResult = {
 				task,
-				result: result.text || summarizeActions(actions) || "Task completed",
+				result: result.text || summarizeActions(actions) || "Run completed",
 				actions,
 				iterations: result.steps?.length || 1,
 				duration: Date.now() - startTime,
@@ -292,16 +296,12 @@ class Agent {
 			await this.memory.saveExecution(finalResult);
 			return finalResult;
 		} catch (err) {
-			clearTimeout(timeoutId);
 			console.error("[Agent] generateText error:", err);
 
-			if (
-				err instanceof Error &&
-				(err.name === "AbortError" || err.message.includes("aborted"))
-			) {
-				const timeoutResult: ExecutionResult = {
+			if (abortState.wasExternallyAborted()) {
+				const cancelledResult: ExecutionResult = {
 					task,
-					result: `Error: task exceeded the ${this.config.maxTime / 1000}s time limit`,
+					result: `Error: ${RUN_CANCELLED_MESSAGE}`,
 					actions: [],
 					iterations: 0,
 					duration: Date.now() - startTime,
@@ -309,7 +309,27 @@ class Agent {
 					usedSendMessage: false,
 					error: {
 						type: "api_error",
-						message: "Task timed out",
+						message: RUN_CANCELLED_MESSAGE,
+						provider: "openrouter",
+					},
+				};
+
+				await this.memory.saveExecution(cancelledResult);
+				return cancelledResult;
+			}
+
+			if (abortState.timedOut()) {
+				const timeoutResult: ExecutionResult = {
+					task,
+					result: `Error: run exceeded the ${this.config.maxTime / 1000}s time limit`,
+					actions: [],
+					iterations: 0,
+					duration: Date.now() - startTime,
+					incomplete: true,
+					usedSendMessage: false,
+					error: {
+						type: "api_error",
+						message: "Run timed out",
 						provider: "openrouter",
 					},
 				};
@@ -356,6 +376,8 @@ class Agent {
 			};
 
 			return errorResult;
+		} finally {
+			abortState.cleanup();
 		}
 	}
 
@@ -364,14 +386,14 @@ class Agent {
 		const skillsSummary = await this.skills.getSkillsSummary();
 		const history = await this.memory.getHistory(5);
 
-		let context = `You are an autonomous agent that works on tasks quietly and efficiently.
+		let context = `You are an autonomous agent that works on live runs quietly and efficiently.
 
 RULES:
-1. Complete the task fully using available tools before responding
-2. Use send_message only for the final completed response
-3. If required information is missing, call ask_user with one clear question and stop
-4. Work silently during execution - don't send progress updates or acknowledgments
-5. **ALWAYS provide a summary of what you did and the result after completing the task**
+1. Keep working until the current request is fully handled or you hit a real blocker
+2. Use send_message whenever it helps: progress updates, partial answers, checkpoints, and the final response are all allowed
+3. If required information is missing, call ask_user with one clear question and stop there
+4. If the conversation changes while you are working, call refresh_thread before the next update and absorb the newest user input
+5. Use send_message for concise progress notes instead of waiting until the end of a long run
 6. To show images or files, use the 'files' parameter in send_message
 7. If information is unclear but nonessential, make a reasonable assumption and explain it
 8. Use skills in /app/ws/skills/ when appropriate - read them with read_file
@@ -379,7 +401,7 @@ RULES:
 10. For long outputs, work in phases: outline, notes, draft sections, assemble, verify, deliver
 11. Prefer writing large intermediate outputs to workspace files and resume from those files instead of keeping everything in one prompt
 12. If tool output is chunked, request the most relevant next chunk instead of assuming the missing content is irrelevant
-13. Before sending a progress update or final response on a long task, call refresh_thread and re-read the live conversation for any new user updates
+13. Ask_user is the only hard stop; otherwise keep the run moving and communicate as needed
 
 ---
 
@@ -410,13 +432,13 @@ IMPORTANT: When reading a skill, use the filename.md (not the display name in pa
 
 To create a new skill, read the template first: read_file with path "/app/ws/skills/_template.md"
 
-SCHEDULING: You can schedule tasks to run automatically. Read the scheduling skill for details: read_file with path "/app/ws/skills/scheduling.md"`;
+SCHEDULING: You can schedule work to run automatically. Read the scheduling skill for details: read_file with path "/app/ws/skills/scheduling.md"`;
 		}
 
 		if (history.length > 0) {
 			context += `
 
-Recent similar tasks:
+Recent similar runs:
 ${history.map((h) => `- ${h.task.slice(0, 80)}... -> ${h.result?.slice(0, 80)}...`).join("\n")}`;
 		}
 
@@ -433,20 +455,20 @@ ${history.map((h) => `- ${h.task.slice(0, 80)}... -> ${h.result?.slice(0, 80)}..
 		budget: Awaited<ReturnType<typeof getActiveModelBudget>>,
 	): PromptMessage[] {
 		const prioritized: PromptMessage[] = [];
-		const snapshot = buildTaskSnapshot(conversationHistory);
+		const snapshot = buildThreadSnapshot(conversationHistory);
 		const recentMessages = conversationHistory.filter(
 			(m) => m.role !== "system",
 		);
 
 		prioritized.push({
 			role: "user",
-			content: `Current task:\n${task}`,
+			content: `Current run:\n${task}`,
 		});
 
 		if (snapshot) {
 			prioritized.push({
 				role: "assistant",
-				content: `Active task snapshot:\n${snapshot}`,
+				content: `Live thread snapshot:\n${snapshot}`,
 			});
 		}
 

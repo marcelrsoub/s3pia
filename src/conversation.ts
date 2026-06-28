@@ -15,6 +15,14 @@ export interface ConversationMetadata {
 	lastIntakeKind?: string;
 	lastIntakeNextStep?: string;
 	lastIntakeGoal?: string;
+	activeRunId?: string;
+	activeRunSource?: "telegram" | "scheduled" | "manual";
+	activeRunStatus?: "running" | "blocked";
+	activeRunPreview?: string;
+	activeRunQuestion?: string;
+	activeRunStartedAt?: number;
+	activeRunUpdatedAt?: number;
+	// Legacy fields retained for existing workspace metadata.
 	activeTaskId?: number;
 	activeTaskSourceKey?: string;
 	activeTaskStatus?: "queued" | "running" | "blocked" | "completed" | "failed";

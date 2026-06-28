@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename, isAbsolute, relative, resolve } from "node:path";
+import { createLinkedAbortController } from "./abort.js";
 import { getEnvVar } from "./env.js";
 import { workspacePath } from "./workspace.js";
 
@@ -18,6 +19,7 @@ export interface SendTelegramResult {
 }
 
 const TELEGRAM_MESSAGE_LIMIT = 4000;
+const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
 
 function getTelegramBotToken(): string | null {
 	return getEnvVar("TELEGRAM_BOT_TOKEN") || null;
@@ -144,27 +146,44 @@ async function sendTelegramRawMessage(
 	chatId: number,
 	text: string,
 	parseMode: "MarkdownV2" | "Markdown" | "HTML" | null = "MarkdownV2",
+	abortSignal?: AbortSignal,
 ): Promise<boolean> {
 	const url = getTelegramApiUrl("sendMessage");
 	if (!url) return false;
 
-	const response = await fetch(url, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			chat_id: chatId,
-			text,
-			...(parseMode ? { parse_mode: parseMode } : {}),
-		}),
+	const linked = createLinkedAbortController({
+		abortSignal,
+		timeoutMs: TELEGRAM_REQUEST_TIMEOUT_MS,
+		abortReason: "Telegram request aborted",
+		timeoutReason: "Telegram request timed out",
 	});
 
-	const data = (await response.json()) as { ok: boolean; description?: string };
-	return data.ok;
+	try {
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				chat_id: chatId,
+				text,
+				...(parseMode ? { parse_mode: parseMode } : {}),
+			}),
+			signal: linked.controller.signal,
+		});
+
+		const data = (await response.json()) as {
+			ok: boolean;
+			description?: string;
+		};
+		return data.ok;
+	} finally {
+		linked.cleanup();
+	}
 }
 
 async function sendTelegramText(
 	chatId: number,
 	text: string,
+	abortSignal?: AbortSignal,
 ): Promise<boolean> {
 	const chunks: string[] = [];
 	for (let index = 0; index < text.length; index += TELEGRAM_MESSAGE_LIMIT) {
@@ -180,9 +199,15 @@ async function sendTelegramText(
 			chatId,
 			markdownMessage,
 			"MarkdownV2",
+			abortSignal,
 		);
 		if (!sent) {
-			const plain = await sendTelegramRawMessage(chatId, chunk, null);
+			const plain = await sendTelegramRawMessage(
+				chatId,
+				chunk,
+				null,
+				abortSignal,
+			);
 			if (!plain) return false;
 		}
 	}
@@ -193,6 +218,7 @@ async function sendTelegramText(
 async function sendTelegramFile(
 	chatId: number,
 	filePath: string,
+	abortSignal?: AbortSignal,
 ): Promise<TelegramFileAttachment | null> {
 	const normalizedPath = normalizeWorkspaceFilePath(filePath);
 	if (!normalizedPath || !existsSync(normalizedPath)) {
@@ -222,18 +248,37 @@ async function sendTelegramFile(
 	formData.append("chat_id", chatId.toString());
 	formData.append(fieldName, blob, sanitizeTelegramFilename(normalizedPath));
 
-	const response = await fetch(url, { method: "POST", body: formData });
-	const data = (await response.json()) as { ok: boolean; description?: string };
-	if (!data.ok) {
-		return null;
-	}
+	const linked = createLinkedAbortController({
+		abortSignal,
+		timeoutMs: TELEGRAM_REQUEST_TIMEOUT_MS,
+		abortReason: "Telegram request aborted",
+		timeoutReason: "Telegram request timed out",
+	});
 
-	return buildWorkspaceAttachment(normalizedPath);
+	try {
+		const response = await fetch(url, {
+			method: "POST",
+			body: formData,
+			signal: linked.controller.signal,
+		});
+		const data = (await response.json()) as {
+			ok: boolean;
+			description?: string;
+		};
+		if (!data.ok) {
+			return null;
+		}
+
+		return buildWorkspaceAttachment(normalizedPath);
+	} finally {
+		linked.cleanup();
+	}
 }
 
 export async function sendTelegramMessageToAdmin(
 	text: string,
 	files: string[] = [],
+	abortSignal?: AbortSignal,
 ): Promise<SendTelegramResult> {
 	const chatId = getAdminChatId();
 	const token = getTelegramBotToken();
@@ -259,13 +304,15 @@ export async function sendTelegramMessageToAdmin(
 	}
 
 	const textSent =
-		text.trim().length === 0 ? true : await sendTelegramText(chatId, text);
+		text.trim().length === 0
+			? true
+			: await sendTelegramText(chatId, text, abortSignal);
 	if (!textSent) {
 		warnings.push("Failed to send Telegram text");
 	}
 
 	for (const filePath of files) {
-		const attachment = await sendTelegramFile(chatId, filePath);
+		const attachment = await sendTelegramFile(chatId, filePath, abortSignal);
 		if (attachment) {
 			attachments.push(attachment);
 		} else {

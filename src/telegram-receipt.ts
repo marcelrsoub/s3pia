@@ -2,13 +2,13 @@ import { generateText } from "ai";
 import { z } from "zod";
 import { createConfiguredLanguageModel } from "./model.js";
 import {
-	composeQueuedTelegramAck,
+	composeLiveTelegramAck,
 	type TelegramAckContext,
 } from "./telegram-ack.js";
 
 export type TelegramMessageKind =
-	| "new_task"
-	| "task_update"
+	| "new_run"
+	| "live_update"
 	| "status_check"
 	| "blocked_answer";
 
@@ -21,8 +21,8 @@ export type TelegramAttachmentKind =
 	| "voice"
 	| "file";
 
-export interface TelegramActiveTaskContext {
-	status: "queued" | "running" | "blocked";
+export interface TelegramActiveRunContext {
+	status: "running" | "blocked";
 	preview: string;
 	question?: string;
 }
@@ -30,7 +30,7 @@ export interface TelegramActiveTaskContext {
 export interface TelegramReceiptContext extends TelegramAckContext {
 	attachmentKind: TelegramAttachmentKind;
 	preferredLanguage?: string | null;
-	activeTask?: TelegramActiveTaskContext | null;
+	activeRun?: TelegramActiveRunContext | null;
 }
 
 export interface TelegramReceiptIntake {
@@ -47,8 +47,6 @@ export interface TelegramReceiptResult {
 	text: string;
 	intake: TelegramReceiptIntake;
 	usedFallback: boolean;
-	shouldEnqueue: boolean;
-	taskInput: string | null;
 }
 
 export interface TelegramReceiptComposerOptions {
@@ -63,8 +61,8 @@ export interface TelegramReceiptComposerOptions {
 const IntakeSchema = z.object({
 	language: z.string().min(2).max(16),
 	messageKind: z.enum([
-		"new_task",
-		"task_update",
+		"new_run",
+		"live_update",
 		"status_check",
 		"blocked_answer",
 	]),
@@ -136,33 +134,28 @@ function buildFallbackIntake(
 	context: TelegramReceiptContext,
 	fallbackText: string,
 ): TelegramReceiptIntake {
-	const activeTask = context.activeTask;
+	const activeRun = context.activeRun;
 	const normalizedContent = context.content.trim().toLowerCase();
-	const likelyTaskUpdate =
-		/\b(add|change|correct|edit|fix|include|replace|revise|update|use|write|attach|attach|file|document|pdf|png|html|instead|actually|another)\b/i.test(
-			normalizedContent,
-		);
-	const likelyStatusCheck =
+	const statusCheckPhrase =
 		/\b(hello|hi|hey|oi|ola|olá|hey there|you there|still there|checking in|any update|status|ping|tudo bem|tá tudo bem|are you there)\b/i.test(
 			normalizedContent,
-		) ||
-		normalizedContent.length <= 24 ||
-		/^[?.!?\s]+$/.test(normalizedContent);
-	const likelyBlockedAnswer =
-		activeTask?.status === "blocked" &&
-		/\b(yes|no|sim|não|nao|ok|okay|sure|right|correct|wrong|one|two|three)\b/i.test(
-			normalizedContent,
 		);
-
-	const defaultKind: TelegramMessageKind = activeTask
-		? likelyBlockedAnswer
-			? "blocked_answer"
-			: likelyTaskUpdate
-				? "task_update"
-				: likelyStatusCheck
-					? "status_check"
-					: "task_update"
-		: "new_task";
+	const punctuationOnly = /^[?.!?\s]+$/.test(normalizedContent);
+	const shortStatusCheck =
+		normalizedContent.length <= 24 && activeRun?.status !== "blocked";
+	const likelyStatusCheck =
+		statusCheckPhrase || punctuationOnly || shortStatusCheck;
+	const defaultKind: TelegramMessageKind = activeRun
+		? activeRun.status === "blocked"
+			? likelyStatusCheck
+				? "status_check"
+				: "blocked_answer"
+			: likelyStatusCheck
+				? "status_check"
+				: "live_update"
+		: likelyStatusCheck
+			? "status_check"
+			: "new_run";
 
 	return {
 		language: inferLanguageHeuristic(
@@ -171,69 +164,43 @@ function buildFallbackIntake(
 		),
 		messageKind: defaultKind,
 		attachmentKind: context.attachmentKind,
-		understoodGoal: activeTask
+		understoodGoal: activeRun
 			? defaultKind === "status_check"
-				? "I received your check-in about the current task."
-				: "I received your update for the current task."
-			: "I received your message.",
-		nextStep: activeTask
+				? "I received your check-in about the current run."
+				: defaultKind === "blocked_answer"
+					? "I received your answer for the blocked question."
+					: "I received your update for the current run."
+			: defaultKind === "status_check"
+				? "I received your status check."
+				: "I received your new request.",
+		nextStep: activeRun
 			? defaultKind === "status_check"
-				? "I’ll keep working and send you the result when it is ready."
-				: "I’ll apply it while the current work continues."
-			: "I’ll review it and continue from there.",
-		reply: fallbackText,
+				? activeRun.status === "blocked"
+					? "I’m waiting for your answer to continue."
+					: "I’ll keep working and send progress or the result when it is ready."
+				: defaultKind === "blocked_answer"
+					? "I’ll use your answer and continue the same run."
+					: "I’ll fold it into the current run."
+			: defaultKind === "status_check"
+				? "I’ll tell you the current state."
+				: "I’ll review it and start the run.",
+		reply:
+			defaultKind === "status_check"
+				? activeRun
+					? activeRun.status === "blocked"
+						? "I’m waiting for your answer to continue."
+						: "I’m still working on the current run."
+					: "No live run is active."
+				: fallbackText,
 		missingInfo: null,
 	};
 }
 
-export function shouldEnqueueReceiptIntake(
-	intake: TelegramReceiptIntake,
-	activeTask?: TelegramActiveTaskContext | null,
-): boolean {
-	if (intake.messageKind === "status_check") {
-		return false;
-	}
-
-	if (
-		activeTask &&
-		(intake.messageKind === "task_update" ||
-			intake.messageKind === "blocked_answer")
-	) {
-		return false;
-	}
-
-	return true;
-}
-
-export function buildTaskInputFromReceipt(
-	content: string,
-	intake: TelegramReceiptIntake,
-	activeTask?: TelegramActiveTaskContext | null,
-): string | null {
-	if (intake.messageKind === "blocked_answer" && activeTask) {
-		return [
-			"The user is replying to a blocked task.",
-			activeTask.question ? `Blocked question: ${activeTask.question}` : null,
-			`Resume the current task using this answer:\n${content}`,
-		]
-			.filter(Boolean)
-			.join("\n\n");
-	}
-
-	if (intake.messageKind === "task_update" && activeTask) {
-		return [
-			"This is a follow-up update to the current task.",
-			`Current task status: ${activeTask.status}`,
-			`Current task summary: ${activeTask.preview}`,
-			`Apply this user update while continuing the task:\n${content}`,
-		].join("\n\n");
-	}
-
-	if (intake.messageKind === "status_check") {
-		return null;
-	}
-
-	return content;
+export function classifyTelegramReceiptIntake(
+	context: TelegramReceiptContext,
+	fallbackText = "Got it.",
+): TelegramReceiptIntake {
+	return buildFallbackIntake(context, fallbackText);
 }
 
 async function generateReceiptIntake(
@@ -248,20 +215,20 @@ async function generateReceiptIntake(
 			"Return JSON only, with no markdown or prose outside the JSON.",
 			"Always keep the reply in the same language as the user's current message.",
 			"If the language is ambiguous, use preferredLanguage if provided, otherwise English.",
-			"When there is an active task, default to messageKind='task_update' unless the message is clearly a status check or clearly a separate new request.",
-			"If the active task is blocked and the user message looks like an answer, prefer messageKind='blocked_answer'.",
+			"When there is an active run, default to messageKind='live_update' unless the message is clearly a status check or the run is blocked and the message looks like an answer.",
+			"If there is no active run, prefer messageKind='new_run' unless the message is clearly a status check.",
 			"The reply must be short, natural, and specific about what was received and what happens next.",
 		].join(" "),
 		prompt: JSON.stringify({
 			content: context.content,
 			attachmentKind: context.attachmentKind,
 			hasFileAttachment: context.hasFileAttachment,
-			backlogCount: context.backlogCount,
+			isBusy: context.isBusy,
 			preferredLanguage: context.preferredLanguage || null,
-			activeTask: context.activeTask || null,
+			activeRun: context.activeRun || null,
 			requiredShape: {
 				language: "BCP47-like short code such as en, pt, es",
-				messageKind: "new_task | task_update | status_check | blocked_answer",
+				messageKind: "new_run | live_update | status_check | blocked_answer",
 				attachmentKind:
 					"none | photo | document | video | audio | voice | file",
 				understoodGoal: "one short sentence",
@@ -288,7 +255,7 @@ export async function composeTelegramReceipt(
 	const fallbackAck =
 		options.fallbackAck ??
 		((ackContext) =>
-			composeQueuedTelegramAck(ackContext, {
+			composeLiveTelegramAck(ackContext, {
 				timeoutMs: Math.min(750, timeoutMs),
 			}));
 	const controller = new AbortController();
@@ -310,12 +277,6 @@ export async function composeTelegramReceipt(
 			text,
 			intake,
 			usedFallback: false,
-			shouldEnqueue: shouldEnqueueReceiptIntake(intake, context.activeTask),
-			taskInput: buildTaskInputFromReceipt(
-				context.content,
-				intake,
-				context.activeTask,
-			),
 		};
 	} catch (err) {
 		console.warn("[TelegramReceipt] Falling back to generic ack:", err);
@@ -325,12 +286,6 @@ export async function composeTelegramReceipt(
 			text: fallbackText,
 			intake,
 			usedFallback: true,
-			shouldEnqueue: shouldEnqueueReceiptIntake(intake, context.activeTask),
-			taskInput: buildTaskInputFromReceipt(
-				context.content,
-				intake,
-				context.activeTask,
-			),
 		};
 	} finally {
 		clearTimeout(timer);

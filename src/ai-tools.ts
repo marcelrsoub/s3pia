@@ -9,6 +9,7 @@
 import { resolve } from "node:path";
 import { tool } from "ai";
 import { z } from "zod";
+import { createLinkedAbortController } from "./abort.js";
 import { getApiKey } from "./api-keys.js";
 import {
 	conversationStore,
@@ -31,6 +32,30 @@ const WORKSPACE = workspacePath();
 async function getChunkCharacterBudget(): Promise<number> {
 	const budget = getCachedActiveModelBudget();
 	return Math.max(4_000, Math.min(24_000, budget.toolReserveTokens * 4));
+}
+
+async function fetchWithLinkedAbort(
+	input: string,
+	init: RequestInit,
+	abortSignal?: AbortSignal,
+	timeoutMs = 15_000,
+	timeoutReason = "Request timed out",
+): Promise<Response> {
+	const linked = createLinkedAbortController({
+		abortSignal,
+		timeoutMs,
+		abortReason: "Request aborted",
+		timeoutReason,
+	});
+
+	try {
+		return await fetch(input, {
+			...init,
+			signal: linked.controller.signal,
+		});
+	} finally {
+		linked.cleanup();
+	}
 }
 
 interface ChunkedTextResult {
@@ -58,6 +83,13 @@ export interface ThreadStateStore {
 					lastIntakeKind?: string;
 					lastIntakeNextStep?: string;
 					lastIntakeGoal?: string;
+					activeRunId?: string;
+					activeRunSource?: string;
+					activeRunStatus?: string;
+					activeRunPreview?: string;
+					activeRunQuestion?: string;
+					activeRunStartedAt?: number;
+					activeRunUpdatedAt?: number;
 					activeTaskId?: number;
 					activeTaskSourceKey?: string;
 					activeTaskStatus?: string;
@@ -144,17 +176,17 @@ interface ThreadStateSnapshot {
 		lastIntakeKind?: string;
 		lastIntakeNextStep?: string;
 		lastIntakeGoal?: string;
-		activeTaskId?: number;
-		activeTaskSourceKey?: string;
-		activeTaskStatus?: string;
-		activeTaskPreview?: string;
-		activeTaskQuestion?: string;
-		activeTaskStartedAt?: number;
-		activeTaskUpdatedAt?: number;
+		activeRunId?: string;
+		activeRunSource?: string;
+		activeRunStatus?: string;
+		activeRunPreview?: string;
+		activeRunQuestion?: string;
+		activeRunStartedAt?: number;
+		activeRunUpdatedAt?: number;
 	};
-	activeTask: {
-		id?: number;
-		sourceKey?: string;
+	activeRun: {
+		id?: string;
+		source?: string;
 		status: string;
 		preview?: string;
 		question?: string;
@@ -175,26 +207,46 @@ export function buildThreadState(
 ): ThreadStateSnapshot {
 	const conversation = store.get(conversationId);
 	const metadata = conversation?.metadata || {};
-	const activeTaskStatus = metadata.activeTaskStatus;
+	const activeRunStatus = [
+		metadata.activeRunStatus,
+		metadata.activeTaskStatus,
+	].find(
+		(value): value is "running" | "blocked" =>
+			value === "running" || value === "blocked",
+	);
+	const legacyRunMetadata = activeRunStatus !== undefined;
 	const checkpointAt =
 		sinceTimestamp ??
-		metadata.activeTaskUpdatedAt ??
-		metadata.activeTaskStartedAt ??
+		metadata.activeRunUpdatedAt ??
+		metadata.activeRunStartedAt ??
+		(legacyRunMetadata
+			? (metadata.activeTaskUpdatedAt ?? metadata.activeTaskStartedAt)
+			: undefined) ??
 		conversation?.lastActivity ??
 		0;
-	const activeTask =
-		activeTaskStatus &&
-		["queued", "running", "blocked"].includes(activeTaskStatus)
-			? {
-					id: metadata.activeTaskId,
-					sourceKey: metadata.activeTaskSourceKey,
-					status: activeTaskStatus,
-					preview: metadata.activeTaskPreview,
-					question: metadata.activeTaskQuestion,
-					startedAt: metadata.activeTaskStartedAt,
-					updatedAt: metadata.activeTaskUpdatedAt,
-				}
-			: null;
+	const activeRun = activeRunStatus
+		? {
+				id:
+					metadata.activeRunId ||
+					(legacyRunMetadata ? metadata.activeTaskId?.toString() : undefined),
+				source:
+					metadata.activeRunSource ||
+					(legacyRunMetadata ? "telegram" : undefined),
+				status: activeRunStatus,
+				preview:
+					metadata.activeRunPreview ||
+					(legacyRunMetadata ? metadata.activeTaskPreview : undefined),
+				question:
+					metadata.activeRunQuestion ||
+					(legacyRunMetadata ? metadata.activeTaskQuestion : undefined),
+				startedAt:
+					metadata.activeRunStartedAt ||
+					(legacyRunMetadata ? metadata.activeTaskStartedAt : undefined),
+				updatedAt:
+					metadata.activeRunUpdatedAt ||
+					(legacyRunMetadata ? metadata.activeTaskUpdatedAt : undefined),
+			}
+		: null;
 
 	const sourceMessages =
 		sinceTimestamp !== undefined
@@ -210,9 +262,9 @@ export function buildThreadState(
 	const newUserUpdates = userMessages.length;
 
 	const summaryParts = [
-		activeTask
-			? `Active task ${activeTask.status}: ${activeTask.preview || "unknown"}`
-			: "No active task.",
+		activeRun
+			? `Live run ${activeRun.status}: ${activeRun.preview || "unknown"}`
+			: "No active run.",
 		newUserUpdates > 0
 			? `Recent user updates: ${newUserUpdates}`
 			: "No recent user updates.",
@@ -229,15 +281,27 @@ export function buildThreadState(
 			lastIntakeKind: metadata.lastIntakeKind,
 			lastIntakeNextStep: metadata.lastIntakeNextStep,
 			lastIntakeGoal: metadata.lastIntakeGoal,
-			activeTaskId: metadata.activeTaskId,
-			activeTaskSourceKey: metadata.activeTaskSourceKey,
-			activeTaskStatus: metadata.activeTaskStatus,
-			activeTaskPreview: metadata.activeTaskPreview,
-			activeTaskQuestion: metadata.activeTaskQuestion,
-			activeTaskStartedAt: metadata.activeTaskStartedAt,
-			activeTaskUpdatedAt: metadata.activeTaskUpdatedAt,
+			activeRunId:
+				metadata.activeRunId ||
+				(legacyRunMetadata ? metadata.activeTaskId?.toString() : undefined),
+			activeRunSource:
+				metadata.activeRunSource ||
+				(legacyRunMetadata ? "telegram" : undefined),
+			activeRunStatus: activeRunStatus,
+			activeRunPreview:
+				metadata.activeRunPreview ||
+				(legacyRunMetadata ? metadata.activeTaskPreview : undefined),
+			activeRunQuestion:
+				metadata.activeRunQuestion ||
+				(legacyRunMetadata ? metadata.activeTaskQuestion : undefined),
+			activeRunStartedAt:
+				metadata.activeRunStartedAt ||
+				(legacyRunMetadata ? metadata.activeTaskStartedAt : undefined),
+			activeRunUpdatedAt:
+				metadata.activeRunUpdatedAt ||
+				(legacyRunMetadata ? metadata.activeTaskUpdatedAt : undefined),
 		},
-		activeTask,
+		activeRun,
 		recentMessages,
 		newUserUpdates,
 		latestUserMessage,
@@ -252,7 +316,7 @@ export const aiTools = {
 		inputSchema: z.object({
 			query: z.string().describe("The search query"),
 		}),
-		execute: async ({ query }) => {
+		execute: async ({ query }, { abortSignal } = {}) => {
 			if (!query) {
 				return "Error: query parameter is required. Provide a search term.";
 			}
@@ -262,40 +326,53 @@ export const aiTools = {
 				return "Error: TAVILY_API_KEY not configured";
 			}
 
-			const response = await fetch("https://api.tavily.com/search", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					api_key: apiKey,
-					query,
-					max_results: 10,
-					search_depth: "basic",
-					include_answer: true,
-					include_raw_content: false,
-				}),
-			});
+			try {
+				const response = await fetchWithLinkedAbort(
+					"https://api.tavily.com/search",
+					{
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							api_key: apiKey,
+							query,
+							max_results: 10,
+							search_depth: "basic",
+							include_answer: true,
+							include_raw_content: false,
+						}),
+					},
+					abortSignal,
+					20_000,
+					"Tavily search timed out",
+				);
 
-			if (!response.ok) {
-				const errorText = await response.text();
-				return `Error: Tavily API error: ${response.status} ${errorText}`;
-			}
-
-			const data = (await response.json()) as {
-				answer?: string;
-				results?: Array<{ title: string; url: string; content: string }>;
-			};
-
-			let output = "";
-			if (data.answer) {
-				output += `## Summary\n${data.answer}\n\n`;
-			}
-			output += `## Search Results\n\n`;
-			if (data.results && data.results.length > 0) {
-				for (const result of data.results) {
-					output += `### ${result.title}\nURL: ${result.url}\n${result.content?.slice(0, 300) || ""}...\n\n`;
+				if (!response.ok) {
+					const errorText = await response.text();
+					return `Error: Tavily API error: ${response.status} ${errorText}`;
 				}
+
+				const data = (await response.json()) as {
+					answer?: string;
+					results?: Array<{ title: string; url: string; content: string }>;
+				};
+
+				let output = "";
+				if (data.answer) {
+					output += `## Summary\n${data.answer}\n\n`;
+				}
+				output += `## Search Results\n\n`;
+				if (data.results && data.results.length > 0) {
+					for (const result of data.results) {
+						output += `### ${result.title}\nURL: ${result.url}\n${result.content?.slice(0, 300) || ""}...\n\n`;
+					}
+				}
+				return output || "No results found.";
+			} catch (err) {
+				if (abortSignal?.aborted) {
+					throw err;
+				}
+				return `Error: ${err instanceof Error ? err.message : "Unknown error"}`;
 			}
-			return output || "No results found.";
 		},
 	}),
 
@@ -493,27 +570,32 @@ export const aiTools = {
 				.optional()
 				.describe("Character offset for chunked reads of command output"),
 		}),
-		execute: async ({ command, offset = 0 }) => {
+		execute: async ({ command, offset = 0 }, { abortSignal } = {}) => {
 			console.log(`[exec] Running: ${command}`);
 			const TIMEOUT_MS = 140 * 1000; // 2 minutes 20 seconds
+			let linked: ReturnType<typeof createLinkedAbortController> | null = null;
 
 			try {
-				const controller = new AbortController();
-				const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+				linked = createLinkedAbortController({
+					abortSignal,
+					timeoutMs: TIMEOUT_MS,
+					abortReason: "Command aborted",
+					timeoutReason: "Command timed out",
+				});
 
 				const proc = Bun.spawn(["sh", "-c", command], {
 					cwd: WORKSPACE,
 					env: process.env,
 					stdout: "pipe",
 					stderr: "pipe",
-					signal: controller.signal,
+					signal: linked.controller.signal,
 				});
 
 				const stdout = await new Response(proc.stdout).text();
 				const stderr = await new Response(proc.stderr).text();
 				const exitCode = await proc.exited;
 
-				clearTimeout(timeoutId);
+				linked.cleanup();
 
 				const output =
 					exitCode !== 0
@@ -525,13 +607,15 @@ export const aiTools = {
 					offset,
 				});
 			} catch (err) {
-				if (
-					err instanceof Error &&
-					(err.name === "AbortError" || err.message?.includes("abort"))
-				) {
+				if (abortSignal?.aborted) {
+					throw err;
+				}
+				if (linked?.timedOut()) {
 					return `Error: Command timed out after 140 seconds. Try breaking this into smaller steps.`;
 				}
 				return `Error: ${err instanceof Error ? err.message : "Unknown error"}`;
+			} finally {
+				linked?.cleanup();
 			}
 		},
 	}),
@@ -552,12 +636,21 @@ export const aiTools = {
 				.optional()
 				.describe("Character offset for chunked reads of fetched content"),
 		}),
-		execute: async ({ url, textOnly = true, offset = 0 }) => {
+		execute: async (
+			{ url, textOnly = true, offset = 0 },
+			{ abortSignal } = {},
+		) => {
 			console.log(`[web_fetch] Fetching: ${url} (textOnly: ${textOnly})`);
 			try {
-				const response = await fetch(url, {
-					headers: { "User-Agent": "Mozilla/5.0 (compatible; SepiaBot/1.0)" },
-				});
+				const response = await fetchWithLinkedAbort(
+					url,
+					{
+						headers: { "User-Agent": "Mozilla/5.0 (compatible; SepiaBot/1.0)" },
+					},
+					abortSignal,
+					20_000,
+					"Web fetch timed out",
+				);
 				if (!response.ok) {
 					return `Error: HTTP ${response.status} ${response.statusText}`;
 				}
@@ -587,6 +680,9 @@ export const aiTools = {
 					offset,
 				});
 			} catch (err) {
+				if (abortSignal?.aborted) {
+					throw err;
+				}
 				return `Error: ${err instanceof Error ? err.message : "Unknown error"}`;
 			}
 		},
@@ -667,7 +763,7 @@ export const aiTools = {
 
 	ask_user: tool({
 		description:
-			"Pause the task and ask the Telegram admin one clear question when required information is missing.",
+			"Pause the live run and ask the Telegram admin one clear question when required information is missing.",
 		inputSchema: z.object({
 			question: z.string().min(1).describe("The question the user must answer"),
 		}),
@@ -680,7 +776,7 @@ export const aiTools = {
 
 	send_message: tool({
 		description:
-			"Send a message to the Telegram admin. To show images or files to the user, you MUST use the 'files' parameter - mentioning files in the message text will NOT render them. Images (png, jpg, gif, webp, svg) will be displayed inline, other files get download buttons.",
+			"Send a message to the Telegram admin during the live run. To show images or files to the user, you MUST use the 'files' parameter - mentioning files in the message text will NOT render them. Images (png, jpg, gif, webp, svg) will be displayed inline, other files get download buttons.",
 		inputSchema: z.object({
 			message: z.string().describe("The message to send"),
 			files: z
@@ -690,7 +786,7 @@ export const aiTools = {
 					"Array of workspace file paths to attach. IMPORTANT: Must be an array like ['path/to/file.pdf'], not a string.",
 				),
 		}),
-		execute: async ({ message, files }) => {
+		execute: async ({ message, files }, { abortSignal } = {}) => {
 			console.log(
 				`[send_message] Telegram: ${(message || "").slice(0, 100)}...${files ? ` (files: ${JSON.stringify(files)})` : ""}`,
 			);
@@ -738,6 +834,7 @@ export const aiTools = {
 				const result = await sendTelegramMessageToAdmin(
 					message,
 					attachments.map((file) => file.path),
+					abortSignal,
 				);
 
 				if (result.messageDelivered) {
@@ -762,6 +859,9 @@ export const aiTools = {
 						: { error: "Failed to send Telegram message" }),
 				};
 			} catch (err) {
+				if (abortSignal?.aborted) {
+					throw err;
+				}
 				return {
 					success: false,
 					messageDelivered: false,

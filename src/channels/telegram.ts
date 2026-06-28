@@ -10,12 +10,14 @@ import {
 	TELEGRAM_CONVERSATION_ID,
 } from "../conversation.js";
 import { getEnvVar } from "../env.js";
-import { getTaskQueue } from "../task-queue.js";
-import { shouldSendQueuedAck } from "../telegram-ack.js";
+import { formatLiveRunAge, getLiveRunCoordinator } from "../live-run.js";
+import { shouldSendLiveAck } from "../telegram-ack.js";
 import { sendTelegramMessageToAdmin } from "../telegram-client.js";
 import {
+	classifyTelegramReceiptIntake,
 	composeTelegramReceipt,
 	type TelegramAttachmentKind,
+	type TelegramReceiptContext,
 } from "../telegram-receipt.js";
 import { workspacePath } from "../workspace.js";
 
@@ -67,15 +69,53 @@ function inferAttachmentKind(
 	return "none";
 }
 
-function summarizeTaskPreview(taskInput: string): string {
-	const normalized = taskInput.trim().replace(/\s+/g, " ");
+function summarizeLiveRunPreview(text: string): string {
+	const normalized = text.trim().replace(/\s+/g, " ");
 	if (normalized.length <= 140) return normalized;
 	return `${normalized.slice(0, 137).trimEnd()}...`;
 }
 
+function buildStatusMessage() {
+	const snapshot = getLiveRunCoordinator().getStatusSnapshot(
+		TELEGRAM_CONVERSATION_ID,
+	);
+	const currentRun = snapshot.currentRun;
+
+	if (currentRun?.status === "running") {
+		return [
+			"Live run: running",
+			currentRun.source ? `Source: ${currentRun.source}` : null,
+			`Preview: ${summarizeLiveRunPreview(currentRun.preview)}`,
+			currentRun.startedAt
+				? `Running for: ${formatLiveRunAge(currentRun.startedAt)}`
+				: null,
+			snapshot.rerunRequested ? "A new update is waiting." : null,
+			"Send /cancel to stop the current run.",
+		]
+			.filter(Boolean)
+			.join("\n");
+	}
+
+	if (currentRun?.status === "blocked") {
+		return [
+			"Live run: blocked",
+			currentRun.source ? `Source: ${currentRun.source}` : null,
+			`Preview: ${summarizeLiveRunPreview(currentRun.preview)}`,
+			currentRun.question ? `Question: ${currentRun.question}` : null,
+			currentRun.startedAt
+				? `Waiting for: ${formatLiveRunAge(currentRun.startedAt)}`
+				: null,
+			"Reply with the answer to continue this run.",
+		]
+			.filter(Boolean)
+			.join("\n");
+	}
+
+	return "No live run is active.";
+}
+
 export class TelegramChannel {
 	private token: string;
-	private botIdentity: string;
 	private started = false;
 	private pollTimer: ReturnType<typeof setInterval> | null = null;
 	private lastUpdateId = 0;
@@ -83,7 +123,6 @@ export class TelegramChannel {
 
 	constructor(config: TelegramChannelConfig) {
 		this.token = config.token;
-		this.botIdentity = config.token.split(":")[0] || "unknown";
 	}
 
 	getName(): string {
@@ -253,124 +292,79 @@ export class TelegramChannel {
 			return;
 		}
 
-		const existingTask = getTaskQueue().getBySourceKey(
-			`telegram:${this.botIdentity}:${update.update_id}`,
+		const coordinator = getLiveRunCoordinator();
+		const liveSnapshot = coordinator.getStatusSnapshot(
+			TELEGRAM_CONVERSATION_ID,
 		);
-		if (existingTask) return;
-
-		const queue = getTaskQueue();
-		const blockedTask = queue.getLatestBlocked();
-		const backlogCount = queue.getBacklogCount();
-		const shouldAck =
-			Boolean(blockedTask) ||
-			shouldSendQueuedAck({
-				content,
-				hasFileAttachment: content.includes("[FILE:"),
-				backlogCount,
-			});
+		const currentRun = liveSnapshot.currentRun;
+		const hasFileAttachment = content.includes("[FILE:");
 		const attachmentKind = inferAttachmentKind(message);
-
-		const conversation =
-			conversationStore.get(TELEGRAM_CONVERSATION_ID) ||
-			conversationStore.create(TELEGRAM_CONVERSATION_ID);
-		const history = [...conversation.messages];
 		const preferredLanguage =
 			conversationStore.getMetadata(TELEGRAM_CONVERSATION_ID)
 				.preferredLanguage || null;
+		const shouldAck = shouldSendLiveAck({
+			content,
+			hasFileAttachment,
+			isBusy: liveSnapshot.status !== "idle",
+		});
+
 		conversationStore.addMessage(
 			TELEGRAM_CONVERSATION_ID,
 			"user",
 			content,
 			"telegram",
 		);
-		const liveHistory = conversationStore.getMessagesForAI(
-			TELEGRAM_CONVERSATION_ID,
-		);
-		const followUpTimestamp =
-			conversation.messages.at(-1)?.timestamp ?? Date.now();
 
-		if (blockedTask) {
-			conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
-				activeTaskId: blockedTask.id,
-				activeTaskSourceKey: blockedTask.sourceKey,
-				activeTaskStatus: blockedTask.status,
-				activeTaskPreview: summarizeTaskPreview(
-					blockedTask.input || blockedTask.result || "",
-				),
-				activeTaskQuestion: blockedTask.question,
-				activeTaskStartedAt: blockedTask.createdAt,
-				activeTaskUpdatedAt: followUpTimestamp,
-			});
-		}
-
-		if (shouldAck) {
-			const receiptTaskContext =
-				blockedTask && blockedTask.status === "blocked"
+		const receiptContext: TelegramReceiptContext = {
+			content,
+			hasFileAttachment,
+			isBusy: liveSnapshot.status !== "idle",
+			attachmentKind,
+			preferredLanguage,
+			activeRun:
+				currentRun && currentRun.status !== "idle"
 					? {
-							status: blockedTask.status,
-							preview: summarizeTaskPreview(
-								blockedTask.input || blockedTask.result || "",
-							),
-							question: blockedTask.question,
+							status: currentRun.status,
+							preview: currentRun.preview,
+							question: currentRun.question,
 						}
-					: null;
-			const receipt = await composeTelegramReceipt({
-				content,
-				hasFileAttachment: content.includes("[FILE:"),
-				backlogCount,
-				attachmentKind,
-				preferredLanguage,
-				activeTask: receiptTaskContext,
-			});
-			conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
-				preferredLanguage: receipt.intake.language,
-				lastIntakeKind: receipt.intake.messageKind,
-				lastIntakeNextStep: receipt.intake.nextStep,
-				lastIntakeGoal: receipt.intake.understoodGoal,
-			});
+					: null,
+		};
+
+		const fallbackIntake = classifyTelegramReceiptIntake(receiptContext);
+		const receipt = shouldAck
+			? await composeTelegramReceipt(receiptContext)
+			: {
+					text: fallbackIntake.reply,
+					intake: fallbackIntake,
+					usedFallback: true,
+				};
+
+		conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
+			preferredLanguage: receipt.intake.language,
+			lastIntakeKind: receipt.intake.messageKind,
+			lastIntakeNextStep: receipt.intake.nextStep,
+			lastIntakeGoal: receipt.intake.understoodGoal,
+		});
+
+		const shouldSendReceipt =
+			shouldAck || receipt.intake.messageKind === "status_check";
+		if (shouldSendReceipt) {
 			console.log(
-				`[Telegram] Early receipt sent (${receipt.usedFallback ? "fallback" : "contextual"}): ${receipt.intake.messageKind}`,
+				`[Telegram] Live receipt sent (${receipt.usedFallback ? "fallback" : "contextual"}): ${receipt.intake.messageKind}`,
 			);
 			await this.sendRawMessage(message.chat.id, receipt.text);
+		}
 
-			if (
-				blockedTask &&
-				(receipt.intake.messageKind === "task_update" ||
-					receipt.intake.messageKind === "blocked_answer")
-			) {
-				const resumed = queue.resumeBlockedTask(
-					blockedTask.id,
-					receipt.taskInput || content,
-					liveHistory,
-					followUpTimestamp,
-				);
-				if (!resumed) {
-					queue.enqueue({
-						kind: "telegram",
-						sourceKey: `telegram:${this.botIdentity}:${update.update_id}`,
-						input: receipt.taskInput || content,
-						history,
-					});
-				}
-				return;
-			}
-
-			if (receipt.shouldEnqueue && receipt.taskInput) {
-				queue.enqueue({
-					kind: "telegram",
-					sourceKey: `telegram:${this.botIdentity}:${update.update_id}`,
-					input: receipt.taskInput,
-					history,
-				});
-			}
+		if (receipt.intake.messageKind === "status_check") {
 			return;
 		}
 
-		queue.enqueue({
-			kind: "telegram",
-			sourceKey: `telegram:${this.botIdentity}:${update.update_id}`,
-			input: content,
-			history,
+		coordinator.requestRun({
+			conversationId: TELEGRAM_CONVERSATION_ID,
+			source: "telegram",
+			kind: receipt.intake.messageKind,
+			preview: summarizeLiveRunPreview(content),
 		});
 	}
 
@@ -388,18 +382,25 @@ export class TelegramChannel {
 		if (command === "/help") {
 			await this.sendRawMessage(
 				chatId,
-				"Available commands: /start, /help, /status",
+				"Available commands: /start, /help, /status, /cancel, /stop",
 			);
 			return;
 		}
 
 		if (command === "/status") {
-			const latest = getTaskQueue().getLatest();
+			await this.sendRawMessage(chatId, buildStatusMessage());
+			return;
+		}
+
+		if (command === "/cancel" || command === "/stop") {
+			const cancelled = getLiveRunCoordinator().cancelActiveRun(
+				TELEGRAM_CONVERSATION_ID,
+			);
 			await this.sendRawMessage(
 				chatId,
-				latest
-					? `Latest task: ${latest.status}${latest.error ? ` (${latest.error})` : ""}`
-					: "No tasks have been queued.",
+				cancelled
+					? `Cancelled the current run: ${summarizeLiveRunPreview(cancelled.preview)}`
+					: "No live run is active.",
 			);
 			return;
 		}

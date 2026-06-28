@@ -39,11 +39,12 @@ test("buildThreadState returns a compact live thread snapshot", () => {
 		get: () => ({
 			lastActivity: now,
 			metadata: {
-				activeTaskId: 42,
-				activeTaskStatus: "running",
-				activeTaskPreview: "Draft a short summary of the attached notes",
-				activeTaskStartedAt: now - 1_000,
-				activeTaskUpdatedAt: now,
+				activeRunId: "42",
+				activeRunSource: "telegram",
+				activeRunStatus: "running",
+				activeRunPreview: "Draft a short summary of the attached notes",
+				activeRunStartedAt: now - 1_000,
+				activeRunUpdatedAt: now,
 			},
 		}),
 		getRecentMessages: () => [
@@ -72,8 +73,8 @@ test("buildThreadState returns a compact live thread snapshot", () => {
 
 	const state = buildThreadState(conversationId, undefined, 8, mockStore);
 
-	expect(state.activeTask?.status).toBe("running");
-	expect(state.summary).toContain("Active task running");
+	expect(state.activeRun?.status).toBe("running");
+	expect(state.summary).toContain("Live run running");
 	expect(state.summary).toContain("Recent user updates: 1");
 	expect(state.recentMessages.length).toBeGreaterThan(0);
 	expect(state.recentMessages[0]?.preview.length).toBeLessThanOrEqual(180);
@@ -86,11 +87,12 @@ test("buildThreadState includes updates at and after the checkpoint", () => {
 		get: () => ({
 			lastActivity: Date.now(),
 			metadata: {
-				activeTaskId: 99,
-				activeTaskStatus: "running",
-				activeTaskPreview: "Draft the report from file A",
-				activeTaskStartedAt: checkpoint - 1_000,
-				activeTaskUpdatedAt: checkpoint,
+				activeRunId: "99",
+				activeRunSource: "telegram",
+				activeRunStatus: "running",
+				activeRunPreview: "Draft the report from file A",
+				activeRunStartedAt: checkpoint - 1_000,
+				activeRunUpdatedAt: checkpoint,
 			},
 		}),
 		getRecentMessages: () => [],
@@ -115,5 +117,5 @@ test("buildThreadState includes updates at and after the checkpoint", () => {
 	expect(state.checkpointAt).toBe(checkpoint);
 	expect(state.newUserUpdates).toBe(1);
 	expect(state.latestUserMessage?.preview).toContain("Use file B instead.");
-	expect(state.summary).toContain("Active task running");
+	expect(state.summary).toContain("Live run running");
 });

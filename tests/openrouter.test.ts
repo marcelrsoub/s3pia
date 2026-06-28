@@ -5,7 +5,7 @@ import {
 	getFallbackModelMetadata,
 	getOpenRouterModelRegistry,
 } from "../src/openrouter";
-import { buildTaskSnapshot, takeMessagesWithinBudget } from "../src/agent";
+import { buildThreadSnapshot, takeMessagesWithinBudget } from "../src/agent";
 import type { Message } from "../src/conversation";
 
 test("estimateTokens uses a conservative character heuristic", () => {
@@ -62,19 +62,19 @@ test("cached active model budget uses cached metadata without network", async ()
 test("takeMessagesWithinBudget preserves earlier high-priority items", () => {
 	const result = takeMessagesWithinBudget(
 		[
-			{ role: "user", content: "Current task" },
+			{ role: "user", content: "Current run" },
 			{ role: "assistant", content: "Snapshot" },
 			{ role: "user", content: "x".repeat(8000) },
 		],
 		128,
 	);
 
-	expect(result.messages[0]?.content).toBe("Current task");
+	expect(result.messages[0]?.content).toBe("Current run");
 	expect(result.messages[1]?.content).toBe("Snapshot");
 	expect(result.droppedCount).toBeGreaterThan(0);
 });
 
-test("buildTaskSnapshot captures recent user context and files", () => {
+test("buildThreadSnapshot captures recent user context and files", () => {
 	const history: Message[] = [
 		{
 			role: "user",
@@ -95,7 +95,7 @@ test("buildTaskSnapshot captures recent user context and files", () => {
 		},
 	];
 
-	const snapshot = buildTaskSnapshot(history);
+	const snapshot = buildThreadSnapshot(history);
 	expect(snapshot).toContain("Please draft a long ebook");
 	expect(snapshot).toContain("/app/ws/outline.md");
 });

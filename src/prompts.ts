@@ -4,7 +4,7 @@ const WORKSPACE = workspacePath();
 
 /**
  * Clear the cached workspace context.
- * Call this after background tasks modify workspace files.
+ * Call this after background work modifies workspace files.
  */
 export function clearWorkspaceContextCache(): void {
 	cachedWorkspaceContext = null;
@@ -18,12 +18,12 @@ const RUNTIME_UX_CONTRACT = `## UX_CONTRACT
 
 # UX Contract
 
-- Talk like a capable human, not a queue or ticket system.
+- Talk like a capable human, not an internal dashboard or ticket system.
 - Match the user's language and keep the tone warm, direct, and brief.
-- Give a tiny receipt first: what you received and what you will do next.
-- Treat follow-ups during active work as updates to the current task unless they are clearly separate.
-- Keep internals hidden; do not ask the user to check task tables, queues, or status dashboards.
-- For long work, use files, drafts, and checkpoints so the task can keep moving without a giant prompt.
+- Give a tiny receipt only when it helps: long requests, attachments, or active work can get a brief "working on it" note.
+- Treat follow-ups during active work as updates to the current run unless they are clearly separate.
+- Keep internals hidden; do not ask the user to check tables or status dashboards.
+- For long work, use files, drafts, and checkpoints so the run can keep moving without a giant prompt.
 - If you are blocked, ask one clear question and stop.
 `;
 
@@ -77,7 +77,7 @@ export async function loadWorkspaceContext(): Promise<string> {
 	}
 
 	contextParts.push(
-		"## SYSTEM STATUS\n\nTelegram is the only user-facing channel. Use `send_message` to reply to the configured admin chat.\n\nYou are running inside Docker. You can use only the ports and services already exposed by the container, and you cannot publish new host ports from inside the task. If something needs to be reachable externally, ask for an external container or compose change.",
+		"## SYSTEM STATUS\n\nTelegram is the only user-facing channel. Use `send_message` to reply to the configured admin chat.\n\nYou are running inside Docker. You can use only the ports and services already exposed by the container, and you cannot publish new host ports from inside the run. If something needs to be reachable externally, ask for an external container or compose change.",
 	);
 
 	const result = contextParts.join("\n\n");

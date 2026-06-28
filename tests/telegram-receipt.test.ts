@@ -1,9 +1,7 @@
 import { expect, test } from "bun:test";
 import {
-	buildTaskInputFromReceipt,
+	classifyTelegramReceiptIntake,
 	composeTelegramReceipt,
-	shouldEnqueueReceiptIntake,
-	type TelegramReceiptIntake,
 } from "../src/telegram-receipt";
 
 test("returns a contextual receipt in the generated language", async () => {
@@ -11,16 +9,16 @@ test("returns a contextual receipt in the generated language", async () => {
 		{
 			content: "Preciso que você revise este PDF e me diga os pontos principais.",
 			hasFileAttachment: true,
-			backlogCount: 0,
+			isBusy: false,
 			attachmentKind: "document",
 			preferredLanguage: null,
-			activeTask: null,
+			activeRun: null,
 		},
 		{
 			generateIntake: async () =>
 				JSON.stringify({
 					language: "pt",
-					messageKind: "new_task",
+					messageKind: "new_run",
 					attachmentKind: "document",
 					understoodGoal: "Você quer uma revisão do PDF com os pontos principais.",
 					nextStep: "Vou ler a estrutura do arquivo primeiro e depois resumir.",
@@ -32,9 +30,8 @@ test("returns a contextual receipt in the generated language", async () => {
 
 	expect(result.usedFallback).toBe(false);
 	expect(result.intake.language).toBe("pt");
+	expect(result.intake.messageKind).toBe("new_run");
 	expect(result.text).toContain("Recebi o PDF");
-	expect(result.shouldEnqueue).toBe(true);
-	expect(result.taskInput).toContain("Preciso que você revise este PDF");
 });
 
 test("falls back to the generic ack pool when intake fails", async () => {
@@ -42,10 +39,13 @@ test("falls back to the generic ack pool when intake fails", async () => {
 		{
 			content: "Long request text".repeat(20),
 			hasFileAttachment: false,
-			backlogCount: 1,
+			isBusy: true,
 			attachmentKind: "none",
 			preferredLanguage: null,
-			activeTask: null,
+			activeRun: {
+				status: "running",
+				preview: "Generate a mobile PNG from the invitation HTML",
+			},
 		},
 		{
 			generateIntake: async () => {
@@ -57,130 +57,58 @@ test("falls back to the generic ack pool when intake fails", async () => {
 
 	expect(result.usedFallback).toBe(true);
 	expect(result.text).toBe("I'm on it. I'll take a look now.");
-	expect(result.intake.messageKind).toBe("new_task");
+	expect(result.intake.messageKind).toBe("live_update");
 });
 
-test("fallback treats brief follow-ups as status checks when work is active", async () => {
-	const result = await composeTelegramReceipt(
-		{
-			content: "Tudo bem por aí?",
-			hasFileAttachment: false,
-			backlogCount: 1,
-			attachmentKind: "none",
-			preferredLanguage: "pt",
-			activeTask: {
-				status: "running",
-				preview: "Generate a mobile PNG from the invitation HTML",
-			},
-		},
-		{
-			generateIntake: async () => {
-				throw new Error("timeout");
-			},
-			fallbackAck: async () => "Estou olhando isso agora.",
-		},
-	);
-
-	expect(result.usedFallback).toBe(true);
-	expect(result.intake.messageKind).toBe("status_check");
-	expect(result.shouldEnqueue).toBe(false);
-	expect(result.taskInput).toBeNull();
-	expect(result.text).toBe("Estou olhando isso agora.");
-});
-
-test("status checks do not enqueue follow-up work", () => {
-	const intake: TelegramReceiptIntake = {
-		language: "en",
-		messageKind: "status_check",
+test("classifies live updates and blocked answers from the live thread", () => {
+	const liveUpdate = classifyTelegramReceiptIntake({
+		content: "Actually use file B instead.",
+		hasFileAttachment: false,
+		isBusy: true,
 		attachmentKind: "none",
-		understoodGoal: "You want a status update.",
-		nextStep: "I’ll tell you where the current task stands.",
-		reply: "I saw your check-in. I’m still working through the current task.",
-		missingInfo: null,
-	};
-
-	expect(shouldEnqueueReceiptIntake(intake, null)).toBe(false);
-	expect(buildTaskInputFromReceipt("Did you read it?", intake, null)).toBeNull();
-});
-
-test("task updates stay attached to the current active thread", () => {
-	const intake: TelegramReceiptIntake = {
-		language: "en",
-		messageKind: "task_update",
-		attachmentKind: "none",
-		understoodGoal: "You want to update the current task with file B.",
-		nextStep: "I’ll apply that update to the current task.",
-		reply: "I saw your update about file B. I’m applying it to the current task.",
-		missingInfo: null,
-	};
-
-	expect(shouldEnqueueReceiptIntake(intake, {
-		status: "running",
-		preview: "Draft the report from file A",
-	})).toBe(false);
-
-	const taskInput = buildTaskInputFromReceipt("Actually use file B instead.", intake, {
-		status: "running",
-		preview: "Draft the report from file A",
+		preferredLanguage: "en",
+		activeRun: {
+			status: "running",
+			preview: "Draft the report from file A",
+		},
 	});
+	expect(liveUpdate.messageKind).toBe("live_update");
+	expect(liveUpdate.nextStep).toContain("current run");
 
-	expect(taskInput).toContain("This is a follow-up update to the current task.");
-	expect(taskInput).toContain("Current task summary: Draft the report from file A");
-	expect(taskInput).toContain("Actually use file B instead.");
-});
-
-test("blocked answers build a resume prompt for the current task", () => {
-	const intake: TelegramReceiptIntake = {
-		language: "en",
-		messageKind: "blocked_answer",
+	const blockedAnswer = classifyTelegramReceiptIntake({
+		content: "Use file B instead.",
+		hasFileAttachment: false,
+		isBusy: true,
 		attachmentKind: "none",
-		understoodGoal: "You want to answer the blocked question.",
-		nextStep: "I’ll resume the blocked task with your answer.",
-		reply: "Thanks, I’m resuming the task now.",
-		missingInfo: null,
-	};
-
-	expect(
-		shouldEnqueueReceiptIntake(intake, {
+		preferredLanguage: "en",
+		activeRun: {
 			status: "blocked",
 			preview: "Draft the report from file A",
 			question: "Should I use file B instead?",
-		}),
-	).toBe(false);
-
-	const taskInput = buildTaskInputFromReceipt("Use file B instead.", intake, {
-		status: "blocked",
-		preview: "Draft the report from file A",
-		question: "Should I use file B instead?",
+		},
 	});
-
-	expect(taskInput).toContain("The user is replying to a blocked task.");
-	expect(taskInput).toContain("Blocked question: Should I use file B instead?");
-	expect(taskInput).toContain("Resume the current task using this answer:");
-	expect(taskInput).toContain("Use file B instead.");
+	expect(blockedAnswer.messageKind).toBe("blocked_answer");
+	expect(blockedAnswer.understoodGoal).toContain("answer");
 });
 
-test("clearly separate requests still enqueue while work is active", () => {
-	const intake: TelegramReceiptIntake = {
-		language: "en",
-		messageKind: "new_task",
+test("classifies status checks and new runs when idle", () => {
+	const statusCheck = classifyTelegramReceiptIntake({
+		content: "Still there?",
+		hasFileAttachment: false,
+		isBusy: false,
 		attachmentKind: "none",
-		understoodGoal: "You want a separate new task.",
-		nextStep: "I’ll start it as a separate thread.",
-		reply: "Got it. I’ll handle that as a new task.",
-		missingInfo: null,
-	};
+		preferredLanguage: "en",
+		activeRun: null,
+	});
+	expect(statusCheck.messageKind).toBe("status_check");
 
-	expect(
-		shouldEnqueueReceiptIntake(intake, {
-			status: "running",
-			preview: "Draft the report from file A",
-		}),
-	).toBe(true);
-	expect(
-		buildTaskInputFromReceipt("Start a different analysis.", intake, {
-			status: "running",
-			preview: "Draft the report from file A",
-		}),
-	).toBe("Start a different analysis.");
+	const newRun = classifyTelegramReceiptIntake({
+		content: "Please draft a summary of these notes.",
+		hasFileAttachment: false,
+		isBusy: false,
+		attachmentKind: "none",
+		preferredLanguage: "en",
+		activeRun: null,
+	});
+	expect(newRun.messageKind).toBe("new_run");
 });

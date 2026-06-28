@@ -1,49 +1,49 @@
 import { expect, test } from "bun:test";
 import {
-	composeQueuedTelegramAck,
-	shouldSendQueuedAck,
+	composeLiveTelegramAck,
+	shouldSendLiveAck,
 } from "../src/telegram-ack";
 
-test("does not queue-ack short messages unless backlog is present", () => {
+test("does not send a live ack for short idle messages", () => {
 	expect(
-		shouldSendQueuedAck({
+		shouldSendLiveAck({
 			content: "Short ask",
 			hasFileAttachment: false,
-			backlogCount: 0,
+			isBusy: false,
 		}),
 	).toBe(false);
 	expect(
-		shouldSendQueuedAck({
+		shouldSendLiveAck({
 			content: "Short ask",
 			hasFileAttachment: false,
-			backlogCount: 1,
+			isBusy: true,
 		}),
 	).toBe(true);
 });
 
-test("queue-acks long messages and file messages", () => {
+test("sends live acks for long messages and file messages", () => {
 	expect(
-		shouldSendQueuedAck({
+		shouldSendLiveAck({
 			content: "x".repeat(240),
 			hasFileAttachment: false,
-			backlogCount: 0,
+			isBusy: false,
 		}),
 	).toBe(true);
 	expect(
-		shouldSendQueuedAck({
+		shouldSendLiveAck({
 			content: "Short but attached",
 			hasFileAttachment: true,
-			backlogCount: 0,
+			isBusy: false,
 		}),
 	).toBe(true);
 });
 
 test("uses generated ack text when the model output is usable", async () => {
-	const ack = await composeQueuedTelegramAck(
+	const ack = await composeLiveTelegramAck(
 		{
 			content: "Long request text".repeat(20),
 			hasFileAttachment: false,
-			backlogCount: 0,
+			isBusy: false,
 		},
 		{
 			generate: async () => "I'm on it. I'll take a look now.",
@@ -54,11 +54,11 @@ test("uses generated ack text when the model output is usable", async () => {
 });
 
 test("falls back to a pooled reply when the generated ack is unusable", async () => {
-	const fallback = await composeQueuedTelegramAck(
+	const fallback = await composeLiveTelegramAck(
 		{
 			content: "Long request text".repeat(20),
 			hasFileAttachment: false,
-			backlogCount: 0,
+			isBusy: false,
 		},
 		{
 			generate: async () => "Queued and waiting for the queue to clear.",
@@ -73,11 +73,11 @@ test("falls back to a pooled reply when the generated ack is unusable", async ()
 });
 
 test("falls back to the provided static message when asked", async () => {
-	const fallbackOnError = await composeQueuedTelegramAck(
+	const fallbackOnError = await composeLiveTelegramAck(
 		{
 			content: "Long request text".repeat(20),
 			hasFileAttachment: false,
-			backlogCount: 0,
+			isBusy: false,
 		},
 		{
 			generate: async () => {

@@ -4,7 +4,7 @@ import { createConfiguredLanguageModel } from "./model.js";
 export interface TelegramAckContext {
 	content: string;
 	hasFileAttachment: boolean;
-	backlogCount: number;
+	isBusy: boolean;
 }
 
 export interface TelegramAckComposerOptions {
@@ -27,11 +27,11 @@ const DEFAULT_FALLBACK_MESSAGES = [
 ] as const;
 const LONG_MESSAGE_THRESHOLD = 240;
 
-export function shouldSendQueuedAck(context: TelegramAckContext): boolean {
+export function shouldSendLiveAck(context: TelegramAckContext): boolean {
 	return (
 		context.hasFileAttachment ||
 		context.content.trim().length >= LONG_MESSAGE_THRESHOLD ||
-		context.backlogCount > 0
+		context.isBusy
 	);
 }
 
@@ -58,14 +58,14 @@ async function generateAckFromModel(
 	const result = await generateText({
 		model,
 		system:
-			"You write concise Telegram waiting messages. Return exactly one short sentence in first person. Do not mention queues, timing estimates, or internal machinery. Do not use markdown.",
+			"You write concise Telegram live-run acknowledgements. Return exactly one short sentence in first person. Do not mention queues, timing estimates, or internal machinery. Do not use markdown.",
 		prompt: [
 			"Create a short acknowledgement for a Telegram user.",
 			"Keep it calm, human, and direct.",
 			"Return only the message.",
-			`Task length: ${context.content.trim().length} characters.`,
+			`Request length: ${context.content.trim().length} characters.`,
 			`Attachment present: ${context.hasFileAttachment ? "yes" : "no"}.`,
-			`Backlog count: ${context.backlogCount}.`,
+			`Agent busy: ${context.isBusy ? "yes" : "no"}.`,
 		].join("\n"),
 		maxOutputTokens: 24,
 		temperature: 0.6,
@@ -91,7 +91,7 @@ function pickRandomFallbackMessage(
 	return messages[index] || DEFAULT_FALLBACK_MESSAGES[0];
 }
 
-export async function composeQueuedTelegramAck(
+export async function composeLiveTelegramAck(
 	context: TelegramAckContext,
 	options: TelegramAckComposerOptions = {},
 ): Promise<string> {
@@ -120,4 +120,4 @@ export async function composeQueuedTelegramAck(
 	}
 }
 
-export const DEFAULT_QUEUED_ACK = DEFAULT_FALLBACK_MESSAGES[0];
+export const DEFAULT_LIVE_ACK = DEFAULT_FALLBACK_MESSAGES[0];
