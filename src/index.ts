@@ -66,7 +66,7 @@ if (missingVars.length > 0) {
 const server = startServer();
 console.log(` HTTP server listening on port ${server.port}`);
 
-// Start gateway service (Telegram, Web channels)
+// Start gateway service (Telegram channel)
 async function startServices() {
 	startLiveRunCoordinator();
 	await startGateway();

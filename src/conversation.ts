@@ -31,7 +31,6 @@ export interface Message {
 	role: "user" | "assistant" | "system" | "worker";
 	content: string;
 	timestamp: number;
-	source?: "web" | "telegram";
 	workerType?: "tool" | "bash";
 	workerStatus?: "started" | "completed" | "failed";
 	files?: Array<{
@@ -56,7 +55,6 @@ class ConversationStore {
 	private maxConversations = 100;
 	private db: Database | null = null;
 	private readonly DB_PATH = workspacePath("s3pia.db");
-	private telegramCallback?: (content: string) => void;
 
 	constructor() {
 		this.initDatabase();
@@ -91,7 +89,6 @@ class ConversationStore {
 					role TEXT NOT NULL,
 					content TEXT NOT NULL,
 					timestamp INTEGER NOT NULL,
-					source TEXT,
 					worker_type TEXT,
 					worker_status TEXT,
 					FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
@@ -137,13 +134,12 @@ class ConversationStore {
 			for (const conv of convs) {
 				const messages = this.db
 					.query(
-						"SELECT role, content, timestamp, source, worker_type, worker_status, files FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC",
+						"SELECT role, content, timestamp, worker_type, worker_status, files FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC",
 					)
 					.all(conv.id) as Array<{
 					role: string;
 					content: string;
 					timestamp: number;
-					source?: string;
 					worker_type?: string;
 					worker_status?: string;
 					files?: string;
@@ -155,7 +151,6 @@ class ConversationStore {
 						role: m.role as "user" | "assistant" | "system" | "worker",
 						content: m.content,
 						timestamp: m.timestamp,
-						source: m.source as "web" | "telegram" | undefined,
 						workerType: m.worker_type as "tool" | "bash" | undefined,
 						workerStatus: m.worker_status as
 							| "started"
@@ -273,7 +268,6 @@ class ConversationStore {
 		conversationId: string,
 		role: "user" | "assistant" | "worker",
 		content: string,
-		source?: "web" | "telegram",
 		workerType?: "tool" | "bash",
 		workerStatus?: "started" | "completed" | "failed",
 		files?: Message["files"],
@@ -287,7 +281,6 @@ class ConversationStore {
 			role,
 			content,
 			timestamp: Date.now(),
-			source,
 			workerType,
 			workerStatus,
 			files,
@@ -317,14 +310,13 @@ class ConversationStore {
 		if (this.db) {
 			try {
 				this.db.run(
-					`INSERT INTO messages (conversation_id, role, content, timestamp, source, worker_type, worker_status, files)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+					`INSERT INTO messages (conversation_id, role, content, timestamp, worker_type, worker_status, files)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
 					[
 						conversationId,
 						role,
 						content,
 						message.timestamp,
-						source || null,
 						workerType || null,
 						workerStatus || null,
 						files ? JSON.stringify(files) : null,
@@ -341,15 +333,6 @@ class ConversationStore {
 			}
 		}
 
-		// Trigger Telegram callback if set
-		if (
-			role === "assistant" &&
-			source === "telegram" &&
-			this.telegramCallback
-		) {
-			// Extract file references and send to Telegram
-			this.telegramCallback(content);
-		}
 	}
 
 	clear(id: string): void {
@@ -380,10 +363,6 @@ class ConversationStore {
 		return conv.messages.filter(
 			(m) => m.role !== "worker" || m.workerStatus !== "failed",
 		);
-	}
-
-	registerTelegramCallback(callback: (content: string) => void): void {
-		this.telegramCallback = callback;
 	}
 
 	list(): Conversation[] {

@@ -5,7 +5,7 @@ A simple self-contained AI assistant, inspired by OpenClaw, that runs in a singl
 ## Features
 
 - **Single Docker Container** — Everything runs in one container. No complex setup, no external dependencies.
-- **Admin Dashboard** — View Telegram status and edit config in the browser
+- **Config UI** — View Telegram status and edit config in the browser
 - **Telegram** — The only interaction channel
 - **Memory** — Persistent long-term memory across conversations
 - **Soul & Identity** — Customizable personality that evolves over time
@@ -26,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/marcelrsoub/s3pia/main/install.sh |
 
 One command. The installer checks Docker, clones the repo, and starts a single container.
 
-Then open **http://localhost:3210** to check Telegram status and edit your `.env` settings.
+Then open **http://localhost:3210** to edit your `.env` settings and check Telegram status.
 
 ## Updating
 
