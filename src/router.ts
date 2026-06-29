@@ -4,6 +4,7 @@
  * Configuration, status, and Telegram management only.
  */
 
+import { TELEGRAM_CONVERSATION_ID } from "./conversation.js";
 import {
 	getAllEnvVarsWithMetadata,
 	getEnvFileContent,
@@ -16,6 +17,11 @@ import {
 	validateEnv,
 } from "./env.js";
 import { getGateway } from "./gateway/manager.js";
+import { getLiveRunCoordinator } from "./live-run.js";
+import {
+	getActiveModelMetadata,
+	getOpenRouterModelRegistry,
+} from "./openrouter.js";
 import { reinitializeAdminUser } from "./telegram-auth.js";
 import { workspacePath } from "./workspace.js";
 
@@ -57,6 +63,13 @@ export async function handleUpdateEnv(request: Request): Promise<Response> {
 		await Bun.$`mkdir -p ${workspacePath("config")}`;
 		await Bun.write(envFile, content);
 		await loadEnvFile();
+		if (getEnvVar("OPENROUTER_API_KEY")) {
+			void getOpenRouterModelRegistry()
+				.refresh()
+				.catch((err) => {
+					console.warn("[Config] Failed to refresh OpenRouter metadata:", err);
+				});
+		}
 
 		reinitializeAdminUser();
 		await getGateway().reinitializeTelegramChannel();
@@ -93,6 +106,13 @@ export async function handleUpdateConfig(request: Request): Promise<Response> {
 			"ADMIN_TELEGRAM_ID",
 			"TELEGRAM_ENABLED",
 		];
+		if ("OPENROUTER_API_KEY" in updates || "AI_MODEL" in updates) {
+			void getOpenRouterModelRegistry()
+				.refresh()
+				.catch((err) => {
+					console.warn("[Config] Failed to refresh OpenRouter metadata:", err);
+				});
+		}
 		if (telegramKeys.some((key) => key in updates)) {
 			reinitializeAdminUser();
 			await getGateway().reinitializeTelegramChannel();
@@ -110,7 +130,9 @@ export async function handleValidateConfig(): Promise<Response> {
 	return createSuccessResponse(validateEnv());
 }
 
-export async function handleTestZAIKey(request: Request): Promise<Response> {
+export async function handleTestOpenRouterKey(
+	request: Request,
+): Promise<Response> {
 	try {
 		const { apiKey } = (await request.json()) as { apiKey?: string };
 		if (!apiKey || typeof apiKey !== "string") {
@@ -120,28 +142,18 @@ export async function handleTestZAIKey(request: Request): Promise<Response> {
 			});
 		}
 
-		const response = await fetch(
-			"https://api.z.ai/api/coding/paas/v4/chat/completions",
-			{
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Authorization: `Bearer ${apiKey}`,
-				},
-				body: JSON.stringify({
-					model: "glm-4.7",
-					messages: [{ role: "user", content: "test" }],
-					max_tokens: 10,
-				}),
+		const response = await fetch("https://openrouter.ai/api/v1/models", {
+			headers: {
+				Authorization: `Bearer ${apiKey}`,
 			},
-		);
+		});
 
 		return createSuccessResponse({
 			valid: response.ok,
 			error: response.ok
 				? undefined
 				: ((await response.json()) as { error?: { message?: string } })?.error
-						?.message || "API call failed",
+						?.message || "OpenRouter API call failed",
 		});
 	} catch {
 		return createSuccessResponse({ valid: false, error: "Connection failed" });
@@ -150,44 +162,21 @@ export async function handleTestZAIKey(request: Request): Promise<Response> {
 
 export async function handleTestConfig(request: Request): Promise<Response> {
 	try {
-		const { provider, apiKey } = (await request.json()) as {
-			provider?: string;
+		const { apiKey } = (await request.json()) as {
 			apiKey?: string;
 		};
 
-		if (!provider || !apiKey || typeof apiKey !== "string") {
+		if (!apiKey || typeof apiKey !== "string") {
 			return createSuccessResponse({
 				valid: false,
-				error: "Invalid provider or API key format",
+				error: "Invalid API key format",
 			});
 		}
 
-		const testEndpoints: Record<string, string> = {
-			zai: "https://api.z.ai/api/coding/paas/v4/chat/completions",
-			openrouter: "https://openrouter.ai/api/v1/models",
-			anthropic: "https://api.anthropic.com/v1/messages",
-			openai: "https://api.openai.com/v1/models",
-			deepseek: "https://api.deepseek.com/v1/models",
-			groq: "https://api.groq.com/openai/v1/models",
-			gemini: "https://generativelanguage.googleapis.com/v1/models",
-		};
-
-		const endpoint = testEndpoints[provider];
-		if (!endpoint) {
-			return createSuccessResponse({ valid: false, error: "Unknown provider" });
-		}
-
-		const response = await fetch(endpoint, {
-			method: "POST",
+		const response = await fetch("https://openrouter.ai/api/v1/models", {
 			headers: {
-				"Content-Type": "application/json",
 				Authorization: `Bearer ${apiKey}`,
 			},
-			body: JSON.stringify({
-				model: provider === "zai" ? "glm-4.7" : "test",
-				messages: [{ role: "user", content: "test" }],
-				max_tokens: 10,
-			}),
 		});
 
 		return createSuccessResponse({
@@ -205,6 +194,9 @@ export async function handleTestConfig(request: Request): Promise<Response> {
 export async function handleTelegramBotStatus(): Promise<Response> {
 	const gateway = getGateway();
 	const telegramChannel = gateway.getTelegramChannel();
+	const snapshot = getLiveRunCoordinator().getStatusSnapshot(
+		TELEGRAM_CONVERSATION_ID,
+	);
 
 	if (!telegramChannel) {
 		return createSuccessResponse({
@@ -213,10 +205,39 @@ export async function handleTelegramBotStatus(): Promise<Response> {
 			running: false,
 			configured: false,
 			error: "Telegram channel not configured",
+			status: snapshot.status,
+			currentRun: snapshot.currentRun,
+			canCancel: snapshot.canCancel,
+			rerunRequested: snapshot.rerunRequested,
 		});
 	}
 
-	return createSuccessResponse(telegramChannel.getStatus());
+	return createSuccessResponse({
+		...telegramChannel.getStatus(),
+		configured: true,
+		status: snapshot.status,
+		currentRun: snapshot.currentRun,
+		canCancel: snapshot.canCancel,
+		rerunRequested: snapshot.rerunRequested,
+	});
+}
+
+export async function handleTelegramLiveRunCancel(): Promise<Response> {
+	const cancelledRun = getLiveRunCoordinator().cancelActiveRun(
+		TELEGRAM_CONVERSATION_ID,
+	);
+	if (!cancelledRun) {
+		return createSuccessResponse({
+			cancelled: false,
+			message: "No live run to cancel",
+		});
+	}
+
+	return createSuccessResponse({
+		cancelled: true,
+		currentRun: cancelledRun,
+		message: "Cancel request sent",
+	});
 }
 
 export async function handleTelegramBotRestart(): Promise<Response> {
@@ -245,35 +266,41 @@ export async function handleHealth(): Promise<Response> {
 }
 
 export async function handleAIStatus(): Promise<Response> {
-	const provider = getEnvVar("AI_PROVIDER") || "zai";
 	const model = getEnvVar("AI_MODEL") || "";
-
-	const providerKeyField: Record<string, string> = {
-		zai: "ZAI_API_KEY",
-		openrouter: "OPENROUTER_API_KEY",
-		anthropic: "ANTHROPIC_API_KEY",
-		openai: "OPENAI_API_KEY",
-		deepseek: "DEEPSEEK_API_KEY",
-		groq: "GROQ_API_KEY",
-		gemini: "GEMINI_API_KEY",
-	};
-
-	const keyField = providerKeyField[provider] || "ZAI_API_KEY";
-	const hasKey = !!getEnvVar(keyField);
-	const isConfigured = isEnvConfigured();
+	const hasKey = !!getEnvVar("OPENROUTER_API_KEY");
+	const metadata = hasKey && model ? await getActiveModelMetadata() : null;
 
 	let errorMessage: string | undefined;
-	if (!hasKey && isConfigured) {
-		errorMessage = `No API key configured for ${provider.toUpperCase()}`;
+	if (!hasKey && model) {
+		errorMessage = "No OpenRouter API key configured";
 	} else if (!model && hasKey) {
 		errorMessage = "No model configured";
 	}
 
 	return createSuccessResponse({
-		provider,
+		provider: "openrouter",
 		model,
 		configured: hasKey && !!model,
-		hasAuthError: !hasKey && isConfigured,
+		hasAuthError: !hasKey && !!model,
 		errorMessage,
+		metadata,
 	});
+}
+
+export async function handleOpenRouterModels(): Promise<Response> {
+	try {
+		const registry = getOpenRouterModelRegistry();
+		if (registry.getStatus().count === 0 && getEnvVar("OPENROUTER_API_KEY")) {
+			await registry.refresh();
+		}
+		const models = registry.getAllModels();
+		return createSuccessResponse({
+			models,
+			lastRefreshedAt: registry.getStatus().lastRefreshedAt,
+		});
+	} catch (err) {
+		return createErrorResponse(
+			err instanceof Error ? err.message : "Failed to load model metadata",
+		);
+	}
 }

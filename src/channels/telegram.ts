@@ -10,12 +10,17 @@ import {
 	TELEGRAM_CONVERSATION_ID,
 } from "../conversation.js";
 import { getEnvVar } from "../env.js";
-import { getTaskQueue } from "../task-queue.js";
 import {
-	composeQueuedTelegramAck,
-	shouldSendQueuedAck,
-} from "../telegram-ack.js";
+	formatLiveRunAge,
+	getLiveRunCoordinator,
+	type LiveRunTriggerKind,
+} from "../live-run.js";
 import { sendTelegramMessageToAdmin } from "../telegram-client.js";
+import {
+	classifyTelegramReceiptIntake,
+	type TelegramAttachmentKind,
+	type TelegramReceiptContext,
+} from "../telegram-receipt.js";
 import { workspacePath } from "../workspace.js";
 
 export interface TelegramChannelConfig {
@@ -54,17 +59,90 @@ function getValidAdminId(): string | null {
 	return value && /^[1-9]\d*$/.test(value) ? value : null;
 }
 
+function inferAttachmentKind(
+	message: TelegramUpdate["message"],
+): TelegramAttachmentKind {
+	if (!message) return "none";
+	if (message.photo?.length) return "photo";
+	if (message.document) return "document";
+	if (message.video) return "video";
+	if (message.audio) return "audio";
+	if (message.voice) return "voice";
+	return "none";
+}
+
+function summarizeLiveRunPreview(text: string): string {
+	const normalized = text.trim().replace(/\s+/g, " ");
+	if (normalized.length <= 140) return normalized;
+	return `${normalized.slice(0, 137).trimEnd()}...`;
+}
+
+function buildStatusMessage() {
+	const snapshot = getLiveRunCoordinator().getStatusSnapshot(
+		TELEGRAM_CONVERSATION_ID,
+	);
+	const currentRun = snapshot.currentRun;
+
+	if (currentRun?.status === "running") {
+		return [
+			"Live run: running",
+			currentRun.source ? `Source: ${currentRun.source}` : null,
+			`Preview: ${summarizeLiveRunPreview(currentRun.preview)}`,
+			currentRun.startedAt
+				? `Running for: ${formatLiveRunAge(currentRun.startedAt)}`
+				: null,
+			snapshot.rerunRequested ? "A new update is waiting." : null,
+			"Send /cancel to stop the current run.",
+		]
+			.filter(Boolean)
+			.join("\n");
+	}
+
+	if (currentRun?.status === "blocked") {
+		return [
+			"Live run: blocked",
+			currentRun.source ? `Source: ${currentRun.source}` : null,
+			`Preview: ${summarizeLiveRunPreview(currentRun.preview)}`,
+			currentRun.question ? `Question: ${currentRun.question}` : null,
+			currentRun.startedAt
+				? `Waiting for: ${formatLiveRunAge(currentRun.startedAt)}`
+				: null,
+			"Reply with the answer to continue this run.",
+		]
+			.filter(Boolean)
+			.join("\n");
+	}
+
+	return ["Live run: idle", "Send a message and I’ll start one here."].join(
+		"\n",
+	);
+}
+
+const TELEGRAM_PROCESSING_ERROR_MESSAGE =
+	"I hit an error handling that message. Please try again.";
+
+function mapReceiptKindToTriggerKind(
+	messageKind: string,
+	liveStatus: "idle" | "running" | "blocked",
+): LiveRunTriggerKind {
+	if (messageKind === "blocked_answer") {
+		return "blocked_answer";
+	}
+
+	return liveStatus === "idle" ? "new_run" : "live_update";
+}
+
 export class TelegramChannel {
 	private token: string;
-	private botIdentity: string;
 	private started = false;
 	private pollTimer: ReturnType<typeof setInterval> | null = null;
 	private lastUpdateId = 0;
 	private isPolling = false;
+	private pollAbortController: AbortController | null = null;
+	private activePoll: Promise<void> | null = null;
 
 	constructor(config: TelegramChannelConfig) {
 		this.token = config.token;
-		this.botIdentity = config.token.split(":")[0] || "unknown";
 	}
 
 	getName(): string {
@@ -93,6 +171,9 @@ export class TelegramChannel {
 		if (!conversationStore.get(TELEGRAM_CONVERSATION_ID)) {
 			conversationStore.create(TELEGRAM_CONVERSATION_ID);
 		}
+		this.lastUpdateId =
+			conversationStore.getMetadata(TELEGRAM_CONVERSATION_ID)
+				.telegramLastProcessedUpdateId || 0;
 
 		this.started = true;
 		this.pollTimer = setInterval(() => {
@@ -102,7 +183,9 @@ export class TelegramChannel {
 		}, 11_000);
 
 		await this.pollUpdates();
-		console.log("[Telegram] Bot started");
+		if (this.started) {
+			console.log("[Telegram] Bot started");
+		}
 	}
 
 	async stop(): Promise<void> {
@@ -111,6 +194,10 @@ export class TelegramChannel {
 			this.pollTimer = null;
 		}
 		this.started = false;
+		this.pollAbortController?.abort(new Error("Telegram polling stopped"));
+		if (this.activePoll) {
+			await this.activePoll.catch(() => undefined);
+		}
 		console.log("[Telegram] Bot stopped");
 	}
 
@@ -146,32 +233,54 @@ export class TelegramChannel {
 	}
 
 	private async pollUpdates(): Promise<void> {
-		if (this.isPolling) return;
+		if (this.isPolling || !this.started) return;
 		this.isPolling = true;
+		const controller = new AbortController();
+		this.pollAbortController = controller;
+		const poll = (async () => {
+			try {
+				const url = `https://api.telegram.org/bot${this.token}/getUpdates?offset=${this.lastUpdateId + 1}&timeout=10`;
+				const response = await fetch(url, {
+					signal: controller.signal,
+				});
+				const data = (await response.json()) as {
+					ok: boolean;
+					description?: string;
+					result?: TelegramUpdate[];
+				};
+
+				if (!data.ok) {
+					console.error("[Telegram] API error:", data.description);
+					return;
+				}
+
+				const updates = data.result || [];
+				for (const update of updates) {
+					await this.processUpdate(update);
+					this.lastUpdateId = update.update_id;
+					conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
+						telegramLastProcessedUpdateId: this.lastUpdateId,
+					});
+				}
+			} catch (err) {
+				if (!controller.signal.aborted) {
+					console.error("[Telegram] Poll error:", err);
+				}
+			} finally {
+				if (this.pollAbortController === controller) {
+					this.pollAbortController = null;
+				}
+				this.isPolling = false;
+			}
+		})();
+		this.activePoll = poll;
 
 		try {
-			const url = `https://api.telegram.org/bot${this.token}/getUpdates?offset=${this.lastUpdateId + 1}&timeout=10`;
-			const response = await fetch(url);
-			const data = (await response.json()) as {
-				ok: boolean;
-				description?: string;
-				result?: TelegramUpdate[];
-			};
-
-			if (!data.ok) {
-				console.error("[Telegram] API error:", data.description);
-				return;
-			}
-
-			const updates = data.result || [];
-			for (const update of updates) {
-				await this.processUpdate(update);
-				this.lastUpdateId = update.update_id;
-			}
-		} catch (err) {
-			console.error("[Telegram] Poll error:", err);
+			await poll;
 		} finally {
-			this.isPolling = false;
+			if (this.activePoll === poll) {
+				this.activePoll = null;
+			}
 		}
 	}
 
@@ -186,87 +295,113 @@ export class TelegramChannel {
 			return;
 		}
 
-		const parts: string[] = [];
-		const text = message.text || message.caption || "";
-		if (text) {
-			parts.push(text);
-		}
+		try {
+			const parts: string[] = [];
+			const text = message.text || message.caption || "";
+			if (text) {
+				parts.push(text);
+			}
 
-		const timestamp = Date.now();
-		if (message.photo?.length) {
-			const lastPhoto = message.photo[message.photo.length - 1];
-			if (lastPhoto) {
+			const timestamp = Date.now();
+			if (message.photo?.length) {
+				const lastPhoto = message.photo[message.photo.length - 1];
+				if (lastPhoto) {
+					const savePath = await this.downloadFile(
+						lastPhoto.file_id,
+						`photo_${timestamp}.jpg`,
+					);
+					parts.push(`[FILE: ${savePath}]`);
+				}
+			} else if (message.document) {
 				const savePath = await this.downloadFile(
-					lastPhoto.file_id,
-					`photo_${timestamp}.jpg`,
+					message.document.file_id,
+					message.document.file_name || `file_${timestamp}`,
+				);
+				parts.push(`[FILE: ${savePath}]`);
+			} else if (message.video) {
+				const savePath = await this.downloadFile(
+					message.video.file_id,
+					message.video.file_name || `video_${timestamp}.mp4`,
+				);
+				parts.push(`[FILE: ${savePath}]`);
+			} else if (message.audio) {
+				const savePath = await this.downloadFile(
+					message.audio.file_id,
+					message.audio.file_name || `audio_${timestamp}.mp3`,
+				);
+				parts.push(`[FILE: ${savePath}]`);
+			} else if (message.voice) {
+				const savePath = await this.downloadFile(
+					message.voice.file_id,
+					`voice_${timestamp}.ogg`,
 				);
 				parts.push(`[FILE: ${savePath}]`);
 			}
-		} else if (message.document) {
-			const savePath = await this.downloadFile(
-				message.document.file_id,
-				message.document.file_name || `file_${timestamp}`,
+
+			const content = parts.join("\n").trim();
+			if (message.text?.startsWith("/")) {
+				await this.handleCommand(message.chat.id, message.text);
+				return;
+			}
+
+			const coordinator = getLiveRunCoordinator();
+			const liveSnapshot = coordinator.getStatusSnapshot(
+				TELEGRAM_CONVERSATION_ID,
 			);
-			parts.push(`[FILE: ${savePath}]`);
-		} else if (message.video) {
-			const savePath = await this.downloadFile(
-				message.video.file_id,
-				message.video.file_name || `video_${timestamp}.mp4`,
-			);
-			parts.push(`[FILE: ${savePath}]`);
-		} else if (message.audio) {
-			const savePath = await this.downloadFile(
-				message.audio.file_id,
-				message.audio.file_name || `audio_${timestamp}.mp3`,
-			);
-			parts.push(`[FILE: ${savePath}]`);
-		} else if (message.voice) {
-			const savePath = await this.downloadFile(
-				message.voice.file_id,
-				`voice_${timestamp}.ogg`,
-			);
-			parts.push(`[FILE: ${savePath}]`);
-		}
+			const currentRun = liveSnapshot.currentRun;
+			const hasFileAttachment = content.includes("[FILE:");
+			const attachmentKind = inferAttachmentKind(message);
+			const preferredLanguage =
+				conversationStore.getMetadata(TELEGRAM_CONVERSATION_ID)
+					.preferredLanguage || null;
 
-		const content = parts.join("\n").trim();
-		if (message.text?.startsWith("/")) {
-			await this.handleCommand(message.chat.id, message.text);
-			return;
-		}
-
-		const existingTask = getTaskQueue().getBySourceKey(
-			`telegram:${this.botIdentity}:${update.update_id}`,
-		);
-		if (existingTask) return;
-
-		const queue = getTaskQueue();
-		const backlogCount = queue.getBacklogCount();
-		const shouldAck = shouldSendQueuedAck({
-			content,
-			hasFileAttachment: content.includes("[FILE:"),
-			backlogCount,
-		});
-
-		const conversation =
-			conversationStore.get(TELEGRAM_CONVERSATION_ID) ||
-			conversationStore.create(TELEGRAM_CONVERSATION_ID);
-		const history = [...conversation.messages];
-		conversationStore.addMessage(TELEGRAM_CONVERSATION_ID, "user", content);
-
-		queue.enqueue({
-			kind: "telegram",
-			sourceKey: `telegram:${this.botIdentity}:${update.update_id}`,
-			input: content,
-			history,
-		});
-
-		if (shouldAck) {
-			const ack = await composeQueuedTelegramAck({
+			conversationStore.addMessage(
+				TELEGRAM_CONVERSATION_ID,
+				"user",
 				content,
-				hasFileAttachment: content.includes("[FILE:"),
-				backlogCount,
+				"telegram",
+			);
+
+			const receiptContext: TelegramReceiptContext = {
+				content,
+				hasFileAttachment,
+				isBusy: liveSnapshot.status !== "idle",
+				attachmentKind,
+				preferredLanguage,
+				activeRun:
+					currentRun && currentRun.status !== "idle"
+						? {
+								status: currentRun.status,
+								preview: currentRun.preview,
+								question: currentRun.question,
+							}
+						: null,
+			};
+
+			const intake = classifyTelegramReceiptIntake(receiptContext);
+
+			conversationStore.updateMetadata(TELEGRAM_CONVERSATION_ID, {
+				preferredLanguage: intake.language,
+				lastIntakeKind: intake.messageKind,
+				lastIntakeNextStep: intake.nextStep,
+				lastIntakeGoal: intake.understoodGoal,
 			});
-			await this.sendRawMessage(message.chat.id, ack);
+
+			coordinator.requestRun({
+				conversationId: TELEGRAM_CONVERSATION_ID,
+				source: "telegram",
+				kind: mapReceiptKindToTriggerKind(
+					intake.messageKind,
+					liveSnapshot.status,
+				),
+				preview: summarizeLiveRunPreview(content),
+			});
+		} catch (err) {
+			console.error("[Telegram] Failed to process update:", err);
+			await this.sendRawMessage(
+				message.chat.id,
+				TELEGRAM_PROCESSING_ERROR_MESSAGE,
+			);
 		}
 	}
 
@@ -284,18 +419,56 @@ export class TelegramChannel {
 		if (command === "/help") {
 			await this.sendRawMessage(
 				chatId,
-				"Available commands: /start, /help, /status",
+				"Available commands: /start, /help, /steer, /cancel, /stop",
 			);
 			return;
 		}
 
 		if (command === "/status") {
-			const latest = getTaskQueue().getLatest();
+			await this.sendRawMessage(chatId, buildStatusMessage());
+			return;
+		}
+
+		if (command === "/steer") {
+			const steerText = text.slice(command.length).trim();
+			if (!steerText) {
+				await this.sendRawMessage(
+					chatId,
+					"Use /steer followed by a short instruction for the current live run.",
+				);
+				return;
+			}
+
+			conversationStore.addMessage(
+				TELEGRAM_CONVERSATION_ID,
+				"user",
+				steerText,
+				"telegram",
+			);
+
+			getLiveRunCoordinator().requestRun({
+				conversationId: TELEGRAM_CONVERSATION_ID,
+				source: "manual",
+				kind: "steer",
+				preview: summarizeLiveRunPreview(steerText),
+			});
+
 			await this.sendRawMessage(
 				chatId,
-				latest
-					? `Latest task: ${latest.status}${latest.error ? ` (${latest.error})` : ""}`
-					: "No tasks have been queued.",
+				`Steering the current live run: ${summarizeLiveRunPreview(steerText)}`,
+			);
+			return;
+		}
+
+		if (command === "/cancel" || command === "/stop") {
+			const cancelled = getLiveRunCoordinator().cancelActiveRun(
+				TELEGRAM_CONVERSATION_ID,
+			);
+			await this.sendRawMessage(
+				chatId,
+				cancelled
+					? `Cancelled the current run: ${summarizeLiveRunPreview(cancelled.preview)}`
+					: "No live run is active. Send a message to start one.",
 			);
 			return;
 		}

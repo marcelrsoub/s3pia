@@ -1,67 +1,66 @@
 import { expect, test } from "bun:test";
 import {
-	composeQueuedTelegramAck,
-	shouldSendQueuedAck,
+	composeLiveTelegramAck,
+	shouldSendLiveAck,
 } from "../src/telegram-ack";
 
-test("does not queue-ack short messages unless backlog is present", () => {
+test("does not send a live ack for short idle messages", () => {
 	expect(
-		shouldSendQueuedAck({
+		shouldSendLiveAck({
 			content: "Short ask",
 			hasFileAttachment: false,
-			backlogCount: 0,
+			isBusy: false,
 		}),
 	).toBe(false);
 	expect(
-		shouldSendQueuedAck({
+		shouldSendLiveAck({
 			content: "Short ask",
 			hasFileAttachment: false,
-			backlogCount: 1,
+			isBusy: true,
 		}),
 	).toBe(true);
 });
 
-test("queue-acks long messages and file messages", () => {
+test("sends live acks for long messages and file messages", () => {
 	expect(
-		shouldSendQueuedAck({
+		shouldSendLiveAck({
 			content: "x".repeat(240),
 			hasFileAttachment: false,
-			backlogCount: 0,
+			isBusy: false,
 		}),
 	).toBe(true);
 	expect(
-		shouldSendQueuedAck({
+		shouldSendLiveAck({
 			content: "Short but attached",
 			hasFileAttachment: true,
-			backlogCount: 0,
+			isBusy: false,
 		}),
 	).toBe(true);
 });
 
-test("uses generated ack text when the model output is usable", async () => {
-	const ack = await composeQueuedTelegramAck(
+test("uses a provided static ack when configured", async () => {
+	const ack = await composeLiveTelegramAck(
 		{
 			content: "Long request text".repeat(20),
 			hasFileAttachment: false,
-			backlogCount: 0,
+			isBusy: false,
 		},
 		{
-			generate: async () => "I'm on it. I'll take a look now.",
+			fallbackMessage: "I'm on it. I'll take a look now.",
 		},
 	);
 
 	expect(ack).toBe("I'm on it. I'll take a look now.");
 });
 
-test("falls back to a pooled reply when the generated ack is unusable", async () => {
-	const fallback = await composeQueuedTelegramAck(
+test("selects a pooled reply when no static ack is configured", async () => {
+	const fallback = await composeLiveTelegramAck(
 		{
 			content: "Long request text".repeat(20),
 			hasFileAttachment: false,
-			backlogCount: 0,
+			isBusy: false,
 		},
 		{
-			generate: async () => "Queued and waiting for the queue to clear.",
 			fallbackMessages: [
 				"I'm on it. I'll take a look now.",
 				"Got it. I'm checking this now.",
@@ -72,19 +71,16 @@ test("falls back to a pooled reply when the generated ack is unusable", async ()
 	expect(fallback).toBe("Got it. I'm checking this now.");
 });
 
-test("falls back to the provided static message when asked", async () => {
-	const fallbackOnError = await composeQueuedTelegramAck(
+test("prefers a provided static message over the pool", async () => {
+	const fallback = await composeLiveTelegramAck(
 		{
 			content: "Long request text".repeat(20),
 			hasFileAttachment: false,
-			backlogCount: 0,
+			isBusy: false,
 		},
 		{
-			generate: async () => {
-				throw new Error("boom");
-			},
 			fallbackMessage: "I'm on it. I'll reply when it's ready.",
 		},
 	);
-	expect(fallbackOnError).toBe("I'm on it. I'll reply when it's ready.");
+	expect(fallback).toBe("I'm on it. I'll reply when it's ready.");
 });

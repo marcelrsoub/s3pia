@@ -2,12 +2,11 @@
  * CLI Commands
  *
  * Command-line interface for SepiaBot.
- * Provides direct interaction with the agent without running the full gateway.
+ * Provides status and gateway controls for the Telegram-first runtime.
  *
  * Inspired by nanobot: https://github.com/HKUDS/nanobot
  */
 
-import { Agent } from "../agent.js";
 import {
 	getAllEnvVarsWithMetadata,
 	getEnvStatus,
@@ -16,34 +15,7 @@ import {
 	validateEnv,
 } from "../env.js";
 import { getGateway } from "../gateway/manager.js";
-import {
-	getAllProviderNames,
-	getProviderByName,
-} from "../providers/registry.js";
-
-/**
- * Agent command - interact with the agent directly
- */
-export async function agentCommand(message: string): Promise<void> {
-	console.log(`[CLI] Processing: "${message}"`);
-
-	const agent = new Agent();
-	const result = await agent.execute(message);
-
-	if (result.blocked) {
-		console.log(`[CLI] Blocked: ${result.question}`);
-		return;
-	}
-
-	if (result.incomplete) {
-		console.log(`[CLI] Incomplete (max iterations reached)`);
-	}
-
-	console.log(`[CLI] Result:\n${result.result}`);
-	console.log(
-		`\n[CLI] Iterations: ${result.iterations}, Duration: ${result.duration}ms`,
-	);
-}
+import { getActiveModelMetadata } from "../openrouter.js";
 
 /**
  * Status command - show system status
@@ -60,21 +32,21 @@ export async function statusCommand(): Promise<void> {
 	}
 	console.log("");
 
-	// Provider status
-	const aiProvider = getEnvVar("AI_PROVIDER") || "zai";
+	// AI status
 	const aiModel = getEnvVar("AI_MODEL") || "unknown";
-	console.log("AI Provider:");
-	console.log(`  Provider: ${aiProvider}`);
+	console.log("AI Backend:");
+	console.log("  Provider: openrouter");
 	console.log(`  Model: ${aiModel}`);
-
-	const provider = getProviderByName(aiProvider);
-	if (provider) {
-		console.log(`  Base URL: ${provider.baseURL}`);
+	console.log("  Base URL: https://openrouter.ai/api/v1");
+	const metadata = await getActiveModelMetadata();
+	if (metadata) {
+		console.log(
+			`  Context: ${Math.min(metadata.contextLength, metadata.providerContextLength).toLocaleString()} tokens`,
+		);
+		console.log(
+			`  Max completion: ${metadata.maxCompletionTokens.toLocaleString()} tokens`,
+		);
 	}
-	console.log("");
-
-	// Available providers
-	console.log(`Available Providers: ${getAllProviderNames().join(", ")}`);
 	console.log("");
 
 	// Gateway status (if running)
@@ -217,15 +189,6 @@ export async function executeCli(): Promise<void> {
 	const command = args[0];
 
 	switch (command) {
-		case "agent": {
-			const message = args[1];
-			if (!message) {
-				console.log("Usage: agent <message>");
-				return;
-			}
-			await agentCommand(message);
-			break;
-		}
 		case "status": {
 			await statusCommand();
 			break;
@@ -249,15 +212,13 @@ SepiaBot CLI
 Usage: bun run src/cli/index.ts <command> [args...]
 
 Commands:
-  agent <message>       Send a message to the agent
   status                Show system status
 	  config <get|set|validate> [key] [value]  Manage configuration
 	  gateway <start|stop|status|restart>  Control the Telegram gateway
 
 Examples:
-  bun run src/cli/index.ts agent "What is 2+2?"
   bun run src/cli/index.ts status
-  bun run src/cli/index.ts config get AI_PROVIDER
+  bun run src/cli/index.ts config get AI_MODEL
   bun run src/cli/index.ts gateway start
 `);
 	}

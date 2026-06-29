@@ -41,19 +41,22 @@ If S3pia is already installed, the installer detects the existing container. Cho
 ## Requirements
 
 - [Docker](https://docs.docker.com/get-docker/)
-- An API key from any supported provider
+- An OpenRouter API key
 
-## AI Providers
+## AI Backend
 
-| Provider | Get Key |
-|----------|---------|
-| Z.AI | [z.ai/subscribe](https://z.ai/subscribe) |
+S3pia now uses OpenRouter as its only supported LLM backend.
+
+| Service | Get Key |
+|---------|---------|
 | OpenRouter | [openrouter.ai](https://openrouter.ai) |
-| Anthropic | [console.anthropic.com](https://console.anthropic.com) |
-| OpenAI | [platform.openai.com](https://platform.openai.com) |
-| DeepSeek | [platform.deepseek.com](https://platform.deepseek.com) |
-| Groq | [console.groq.com](https://console.groq.com) |
-| Gemini | [ai.google.dev](https://ai.google.dev) |
+
+Set these values in `/app/ws/config/.env`:
+
+```bash
+OPENROUTER_API_KEY=your_key_here
+AI_MODEL=anthropic/claude-sonnet-4
+```
 
 ## How It Works
 
@@ -74,14 +77,14 @@ S3pia: Done! Updated your IDENTITY.md.
 
 ## File Structure
 
-Your data lives in a Docker volume:
+Your data lives in a Docker volume, and the repo's `ws/` folder is the seed template that gets copied into `/app/ws` on first start. The agent reads and writes the live `/app/ws` tree while it runs:
 
 ```
 /app/ws/
+├── BOOTSTRAP.md     # Initial setup instructions
 ├── IDENTITY.md       # Bot's identity (evolves over time)
 ├── USER.md           # Info about you
 ├── SOUL.md           # Bot's personality
-├── BOOTSTRAP.md     # Initial setup instructions
 ├── config/           # API keys and settings
 ├── memory/           # Long-term memory
 │   └── context.md
@@ -162,7 +165,7 @@ docker-compose exec s3pia sh  # Shell into container
 
 - [Deployment Guide](DEPLOY.md) — Deploy to NAS, VPS, or any Docker host
 - [Telegram Setup](docs/telegram.md) — Connect your Telegram bot
-- [Architecture](docs/architecture.md) — How the agent works
+- [Architecture](docs/architecture.md) — Developer-facing design compass for how we build S3pia
 - [Full Index](docs/INDEX.md) — All documentation
 
 ## License

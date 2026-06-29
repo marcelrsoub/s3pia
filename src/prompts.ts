@@ -1,10 +1,11 @@
+import { getSkills } from "./skills.js";
 import { workspacePath } from "./workspace.js";
 
 const WORKSPACE = workspacePath();
 
 /**
  * Clear the cached workspace context.
- * Call this after background tasks modify workspace files.
+ * Call this after background work modifies workspace files.
  */
 export function clearWorkspaceContextCache(): void {
 	cachedWorkspaceContext = null;
@@ -15,8 +16,8 @@ export function clearWorkspaceContextCache(): void {
 let cachedWorkspaceContext: string | null = null;
 
 /**
- * Load workspace context files (IDENTITY.md, SOUL.md, USER.md, BOOTSTRAP.md)
- * These files define the bot's personality, who the user is, and other important context
+ * Load workspace context files (BOOTSTRAP.md, IDENTITY.md, SOUL.md, USER.md).
+ * These are the agent-visible workspace seeds and mutable context.
  */
 export async function loadWorkspaceContext(): Promise<string> {
 	// Return cached value if available
@@ -54,8 +55,15 @@ export async function loadWorkspaceContext(): Promise<string> {
 	}
 
 	contextParts.push(
-		"## SYSTEM STATUS\n\nTelegram is the only user-facing channel. Use `send_message` to reply to the configured admin chat.\n\nYou are running inside Docker. You can use only the ports and services already exposed by the container, and you cannot publish new host ports from inside the task. If something needs to be reachable externally, ask for an external container or compose change.",
+		"## SYSTEM STATUS\n\nTelegram is the only user-facing channel. Use the available message tool to reply to the configured admin chat. If the user should see an image or file, attach workspace paths with the `files` parameter instead of only mentioning them in text. Keep replies mobile-friendly: short paragraphs, bullets, numbered steps, and one idea per line.\n\nYou are running inside Docker. You can use only the ports and services already exposed by the container, and you cannot publish new host ports from inside the run. If something needs to be reachable externally, ask for an external container or compose change.",
 	);
+
+	const skillsSummary = await getSkills().getSkillsSummary();
+	if (skillsSummary && skillsSummary !== "No skills available.") {
+		contextParts.push(
+			`## AVAILABLE SKILLS\n\n${skillsSummary}\n\nRead the relevant skill file when you need the detailed workflow or tool-specific guidance.`,
+		);
+	}
 
 	const result = contextParts.join("\n\n");
 	cachedWorkspaceContext = result;

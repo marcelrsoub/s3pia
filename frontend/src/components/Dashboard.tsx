@@ -1,12 +1,13 @@
-import { Shield, Settings2 } from "lucide-react";
+import { Settings2, Shield } from "lucide-react";
+import { useBotStatus } from "@/hooks/useBotStatus";
 import { EnvEditor } from "./EnvEditor";
 import { Logo } from "./Logo";
 import { TelegramStatusCard } from "./TelegramStatusCard";
-import { useBotStatus } from "@/hooks/useBotStatus";
 import { Badge } from "./ui/badge";
 
 export function Dashboard() {
-	const { botStatus, isLoading, refresh } = useBotStatus();
+	const { botStatus, isLoading, isCancelling, refresh, cancelCurrentRun } =
+		useBotStatus();
 
 	return (
 		<div className="min-h-screen bg-background text-foreground">
@@ -39,7 +40,9 @@ export function Dashboard() {
 				<TelegramStatusCard
 					status={botStatus}
 					isLoading={isLoading}
+					isCancelling={isCancelling}
 					onRefresh={refresh}
+					onCancel={cancelCurrentRun}
 				/>
 
 				<EnvEditor inline onSaved={refresh} />

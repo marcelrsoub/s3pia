@@ -6,20 +6,46 @@ export interface WorkspaceSyncResult {
 	copiedFiles: string[];
 }
 
+export interface WorkspaceSyncEnvironment {
+	existsSync(path: string): boolean;
+	mkdirSync(path: string, options?: { recursive?: boolean }): void;
+	readdirSync(path: string): string[];
+	readTextFile(path: string): Promise<string>;
+	writeTextFile(path: string, content: string): Promise<void>;
+}
+
 function isSyncableSkillFile(filename: string): boolean {
 	return filename.endsWith(".md") && !filename.startsWith("_");
 }
 
+const ROOT_TEMPLATE_FILES = [
+	"BOOTSTRAP.md",
+	"IDENTITY.md",
+	"SOUL.md",
+	"USER.md",
+] as const;
+
+export const defaultWorkspaceSyncEnvironment: WorkspaceSyncEnvironment = {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readTextFile: (path: string) => Bun.file(path).text(),
+	writeTextFile: async (path: string, content: string) => {
+		await Bun.write(path, content);
+	},
+};
+
 async function copyFileIfMissing(
+	env: WorkspaceSyncEnvironment,
 	sourcePath: string,
 	destinationPath: string,
 ): Promise<boolean> {
-	if (existsSync(destinationPath)) {
+	if (env.existsSync(destinationPath)) {
 		return false;
 	}
 
-	const content = await Bun.file(sourcePath).text();
-	await Bun.write(destinationPath, content);
+	const content = await env.readTextFile(sourcePath);
+	await env.writeTextFile(destinationPath, content);
 	return true;
 }
 
@@ -28,28 +54,40 @@ export async function syncDefaultWorkspaceFiles(
 	templateDir = existsSync("/app/ws-template")
 		? "/app/ws-template"
 		: resolve(process.cwd(), "ws"),
+	env: WorkspaceSyncEnvironment = defaultWorkspaceSyncEnvironment,
 ): Promise<WorkspaceSyncResult> {
 	const copiedFiles: string[] = [];
+	env.mkdirSync(workspaceDir, { recursive: true });
 	const templateSkillsDir = join(templateDir, "skills");
 	const workspaceSkillsDir = join(workspaceDir, "skills");
 
-	mkdirSync(workspaceSkillsDir, { recursive: true });
+	env.mkdirSync(workspaceSkillsDir, { recursive: true });
 
-	if (!existsSync(templateSkillsDir)) {
-		return { copiedFiles };
+	if (env.existsSync(templateSkillsDir)) {
+		for (const entry of env.readdirSync(templateSkillsDir)) {
+			if (!isSyncableSkillFile(entry)) {
+				continue;
+			}
+
+			const sourcePath = join(templateSkillsDir, entry);
+			const destinationPath = join(workspaceSkillsDir, entry);
+			const copied = await copyFileIfMissing(env, sourcePath, destinationPath);
+
+			if (copied) {
+				copiedFiles.push(`skills/${entry}`);
+			}
+		}
 	}
 
-	for (const entry of readdirSync(templateSkillsDir)) {
-		if (!isSyncableSkillFile(entry)) {
+	for (const entry of ROOT_TEMPLATE_FILES) {
+		const sourcePath = join(templateDir, entry);
+		if (!env.existsSync(sourcePath)) {
 			continue;
 		}
-
-		const sourcePath = join(templateSkillsDir, entry);
-		const destinationPath = join(workspaceSkillsDir, entry);
-		const copied = await copyFileIfMissing(sourcePath, destinationPath);
-
+		const destinationPath = join(workspaceDir, entry);
+		const copied = await copyFileIfMissing(env, sourcePath, destinationPath);
 		if (copied) {
-			copiedFiles.push(`skills/${entry}`);
+			copiedFiles.push(entry);
 		}
 	}
 

@@ -29,9 +29,12 @@ const { conversationStore } = await import("./conversation.js");
 const { getGateway, startGateway, stopGateway } = await import(
 	"./gateway/manager.js"
 );
+const { startLiveRunCoordinator, stopLiveRunCoordinator } = await import(
+	"./live-run.js"
+);
 const { startHeartbeat, stopHeartbeat } = await import("./heartbeat.js");
+const { getOpenRouterModelRegistry } = await import("./openrouter.js");
 const { startServer } = await import("./server.js");
-const { startTaskQueue, stopTaskQueue } = await import("./task-queue.js");
 
 // Initialize subsystems
 console.log("Starting SepiaBot...");
@@ -49,7 +52,7 @@ console.log(" Logging system ready");
 console.log(" Environment variables loaded");
 
 // Check required env vars
-const requiredEnvVars = ["AI_PROVIDER", "AI_MODEL"];
+const requiredEnvVars = ["OPENROUTER_API_KEY", "AI_MODEL"];
 const missingVars = requiredEnvVars.filter((key) => !process.env[key]);
 
 if (missingVars.length > 0) {
@@ -65,9 +68,22 @@ console.log(` HTTP server listening on port ${server.port}`);
 
 // Start gateway service (Telegram channel)
 async function startServices() {
-	startTaskQueue();
+	startLiveRunCoordinator();
 	await startGateway();
 	console.log(" Gateway service started");
+
+	const registry = getOpenRouterModelRegistry();
+	registry.startAutoRefresh();
+	void registry
+		.refresh()
+		.then(() => {
+			console.log(
+				` OpenRouter metadata ready (${registry.getStatus().count} models cached)`,
+			);
+		})
+		.catch((err) => {
+			console.warn(" OpenRouter metadata unavailable:", err);
+		});
 
 	// Start heartbeat scheduler
 	await startHeartbeat();
@@ -93,9 +109,10 @@ startServices().catch((err) => {
 // Graceful shutdown
 const shutdown = async () => {
 	console.log("\n Shutting down...");
+	getOpenRouterModelRegistry().stopAutoRefresh();
 	await stopHeartbeat();
 	await stopGateway();
-	stopTaskQueue();
+	await stopLiveRunCoordinator();
 	conversationStore.shutdown();
 	process.exit(0);
 };

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+	getEnvStatus,
 	deleteEnvVar,
 	getEnvSummary,
 	getEnvVar,
@@ -53,6 +54,15 @@ async function restoreTestEnvFile(): Promise<void> {
 test("getEnvSummary returns list of env vars", async () => {
 	const summary = await getEnvSummary();
 	expect(Array.isArray(summary)).toBe(true);
+});
+
+test("env status requires OpenRouter config", () => {
+	process.env.OPENROUTER_API_KEY = "";
+	process.env.AI_MODEL = "";
+
+	const status = getEnvStatus();
+	expect(status.configured).toBe(false);
+	expect(status.missingRequired).toContain("OPENROUTER_API_KEY");
 });
 
 test("getEnvVar retrieves value from process.env", () => {

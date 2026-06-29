@@ -10,6 +10,23 @@ import { workspacePath } from "./workspace.js";
 
 export const TELEGRAM_CONVERSATION_ID = "telegram";
 
+export interface ConversationMetadata {
+	preferredLanguage?: string;
+	lastIntakeKind?: string;
+	lastIntakeNextStep?: string;
+	lastIntakeGoal?: string;
+	activeRunId?: string;
+	activeRunSource?: "telegram" | "scheduled" | "manual";
+	activeRunStatus?: "running" | "blocked";
+	activeRunPreview?: string;
+	activeRunQuestion?: string;
+	activeRunStartedAt?: number;
+	activeRunUpdatedAt?: number;
+	piSessionFile?: string;
+	piSessionId?: string;
+	telegramLastProcessedUpdateId?: number;
+}
+
 export interface Message {
 	role: "user" | "assistant" | "system" | "worker";
 	content: string;
@@ -29,6 +46,7 @@ export interface Conversation {
 	messages: Message[];
 	createdAt: number;
 	lastActivity: number;
+	metadata?: ConversationMetadata;
 }
 
 class ConversationStore {
@@ -54,9 +72,15 @@ class ConversationStore {
 				CREATE TABLE IF NOT EXISTS conversations (
 					id TEXT PRIMARY KEY,
 					created_at INTEGER NOT NULL,
-					last_activity INTEGER NOT NULL
+					last_activity INTEGER NOT NULL,
+					metadata TEXT
 				)
 			`);
+			try {
+				this.db.run("ALTER TABLE conversations ADD COLUMN metadata TEXT");
+			} catch {
+				// Column already exists, ignore
+			}
 
 			this.db.run(`
 				CREATE TABLE IF NOT EXISTS messages (
@@ -97,11 +121,14 @@ class ConversationStore {
 
 		try {
 			const convs = this.db
-				.query("SELECT id, created_at, last_activity FROM conversations")
+				.query(
+					"SELECT id, created_at, last_activity, metadata FROM conversations",
+				)
 				.all() as Array<{
 				id: string;
 				created_at: number;
 				last_activity: number;
+				metadata?: string;
 			}>;
 
 			for (const conv of convs) {
@@ -134,6 +161,7 @@ class ConversationStore {
 					})),
 					createdAt: conv.created_at,
 					lastActivity: conv.last_activity,
+					metadata: conv.metadata ? JSON.parse(conv.metadata) : undefined,
 				});
 			}
 
@@ -150,6 +178,7 @@ class ConversationStore {
 			messages: [],
 			createdAt: Date.now(),
 			lastActivity: Date.now(),
+			metadata: {},
 		};
 
 		this.conversations.set(id, conv);
@@ -157,8 +186,13 @@ class ConversationStore {
 		if (this.db) {
 			try {
 				this.db.run(
-					"INSERT INTO conversations (id, created_at, last_activity) VALUES (?, ?, ?)",
-					[id, conv.createdAt, conv.lastActivity],
+					"INSERT INTO conversations (id, created_at, last_activity, metadata) VALUES (?, ?, ?, ?)",
+					[
+						id,
+						conv.createdAt,
+						conv.lastActivity,
+						JSON.stringify(conv.metadata),
+					],
 				);
 			} catch (err) {
 				console.error("[ConversationStore] Failed to save conversation:", err);
@@ -171,6 +205,63 @@ class ConversationStore {
 
 	get(id: string): Conversation | undefined {
 		return this.conversations.get(id);
+	}
+
+	getMetadata(conversationId: string): ConversationMetadata {
+		return this.conversations.get(conversationId)?.metadata || {};
+	}
+
+	getRecentMessages(conversationId: string, limit = 8): Message[] {
+		const conv = this.conversations.get(conversationId);
+		if (!conv) return [];
+		return conv.messages.slice(-Math.max(0, limit));
+	}
+
+	getMessagesSince(conversationId: string, sinceTimestamp: number): Message[] {
+		const conv = this.conversations.get(conversationId);
+		if (!conv) return [];
+		return conv.messages.filter(
+			(message) => message.timestamp >= sinceTimestamp,
+		);
+	}
+
+	getLatestUserMessage(conversationId: string): Message | null {
+		const conv = this.conversations.get(conversationId);
+		if (!conv) return null;
+		for (let i = conv.messages.length - 1; i >= 0; i--) {
+			const message = conv.messages[i];
+			if (message?.role === "user") {
+				return message;
+			}
+		}
+		return null;
+	}
+
+	updateMetadata(
+		conversationId: string,
+		metadata: Partial<ConversationMetadata>,
+	): void {
+		let conv = this.conversations.get(conversationId);
+		if (!conv) {
+			conv = this.create(conversationId);
+		}
+
+		conv.metadata = {
+			...(conv.metadata || {}),
+			...metadata,
+		};
+		conv.lastActivity = Date.now();
+
+		if (this.db) {
+			try {
+				this.db.run(
+					"UPDATE conversations SET metadata = ?, last_activity = ? WHERE id = ?",
+					[JSON.stringify(conv.metadata), conv.lastActivity, conversationId],
+				);
+			} catch (err) {
+				console.error("[ConversationStore] Failed to update metadata:", err);
+			}
+		}
 	}
 
 	addMessage(
