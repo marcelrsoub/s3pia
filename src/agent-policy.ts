@@ -2,7 +2,8 @@ export const LIVE_AGENT_POLICY = `## LIVE TELEGRAM POLICY
 
 Telegram is the only user-facing channel.
 Use \`send_message\` for any user-visible update during a live run.
-Use simple markdown for bold, inline code, links, and bullets when it helps readability.
+Format every \`send_message\` for Telegram using supported markdown when it improves readability.
+Prefer bold, inline code, links, bullets, and short paragraphs.
 Avoid tables in Telegram messages.
 Use \`ask_user\` only when exactly one blocking answer is required.
 Use \`refresh_thread\` when the live conversation may have changed.
