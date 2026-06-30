@@ -25,7 +25,6 @@ export interface ExecutionResult {
 	iterations: number;
 	duration: number;
 	incomplete?: boolean;
-	usedSendMessage?: boolean; // Track if agent used send_message tool
 	error?: {
 		type: "api_quota" | "api_auth" | "api_error" | "unknown";
 		message: string;

@@ -367,6 +367,7 @@ export class HeartbeatScheduler {
 		return `[SCHEDULED WORK]
 
 These scheduled items are due now. Handle them in the live thread and keep the user updated if needed.
+Use send_message for any user-visible update, and use ask_user only if you need one blocking answer. Both tools speak to the user through Telegram.
 
 Scheduled items:
 ${lines}`;

@@ -112,8 +112,6 @@ interface LiveRunState {
 	startedAt?: number;
 	updatedAt?: number;
 	rerunRequested: boolean;
-	usedSendMessage: boolean;
-	turnResponseDelivered: boolean;
 	session: LiveConversationSession | null;
 	sessionLoading: Promise<LiveConversationSession> | null;
 	unsubscribe: (() => void) | null;
@@ -231,83 +229,6 @@ export function summarizeLiveRun(
 	};
 }
 
-function normalizeAssistantText(text: string): string {
-	return text.trim().replace(/\s+/g, " ");
-}
-
-function extractTextFromMessage(message: unknown): string | undefined {
-	if (!message || typeof message !== "object") {
-		return undefined;
-	}
-
-	const maybeMessage = message as {
-		content?: unknown;
-		text?: unknown;
-		role?: unknown;
-	};
-
-	if (typeof maybeMessage.text === "string") {
-		const normalized = normalizeAssistantText(maybeMessage.text);
-		return normalized || undefined;
-	}
-
-	if (typeof maybeMessage.content === "string") {
-		const normalized = normalizeAssistantText(maybeMessage.content);
-		return normalized || undefined;
-	}
-
-	if (Array.isArray(maybeMessage.content)) {
-		const text = maybeMessage.content
-			.map((part) => {
-				if (typeof part === "string") return part;
-				if (part && typeof part === "object" && "text" in part) {
-					const candidate = (part as { text?: unknown }).text;
-					return typeof candidate === "string" ? candidate : "";
-				}
-				return "";
-			})
-			.join(" ");
-		const normalized = normalizeAssistantText(text);
-		return normalized || undefined;
-	}
-
-	return undefined;
-}
-
-function extractAssistantFailureText(message: unknown): string | undefined {
-	const text = extractTextFromMessage(message);
-	if (text) {
-		return text;
-	}
-
-	if (!message || typeof message !== "object") {
-		return undefined;
-	}
-
-	const maybeMessage = message as {
-		errorMessage?: unknown;
-		stopReason?: unknown;
-	};
-	const errorMessage =
-		typeof maybeMessage.errorMessage === "string"
-			? maybeMessage.errorMessage.trim()
-			: "";
-	const stopReason =
-		typeof maybeMessage.stopReason === "string"
-			? maybeMessage.stopReason
-			: undefined;
-
-	if (!errorMessage) {
-		return undefined;
-	}
-
-	if (stopReason === "aborted") {
-		return undefined;
-	}
-
-	return `Error: ${errorMessage}`;
-}
-
 function isWorkspaceContextFile(path: string): boolean {
 	const file = basename(path);
 	return (
@@ -333,40 +254,6 @@ function toAssistantTextContent(
 	text: string,
 ): Array<{ type: "text"; text: string }> {
 	return text.trim().length > 0 ? [{ type: "text", text }] : [];
-}
-
-function seedConversationHistory(
-	sessionManager: SessionManager,
-	messages: Message[],
-): void {
-	if (sessionManager.getEntries().length > 0) {
-		return;
-	}
-
-	for (const message of messages) {
-		if (message.role === "worker") {
-			sessionManager.appendMessage({
-				role: "assistant",
-				content: toAssistantTextContent(
-					`[Worker ${message.workerType || "task"}${message.workerStatus ? `:${message.workerStatus}` : ""}]\n${message.content}`,
-				),
-			} as unknown as Parameters<SessionManager["appendMessage"]>[0]);
-			continue;
-		}
-
-		if (message.role === "assistant") {
-			sessionManager.appendMessage({
-				role: "assistant",
-				content: toAssistantTextContent(message.content),
-			} as unknown as Parameters<SessionManager["appendMessage"]>[0]);
-			continue;
-		}
-
-		sessionManager.appendMessage({
-			role: message.role,
-			content: message.content,
-		} as unknown as Parameters<SessionManager["appendMessage"]>[0]);
-	}
 }
 
 export function normalizeLegacySessionAssistantContent(
@@ -409,6 +296,40 @@ export function normalizeLegacySessionAssistantContent(
 	}
 
 	return true;
+}
+
+function seedConversationHistory(
+	sessionManager: SessionManager,
+	messages: Message[],
+): void {
+	if (sessionManager.getEntries().length > 0) {
+		return;
+	}
+
+	for (const message of messages) {
+		if (message.role === "worker") {
+			sessionManager.appendMessage({
+				role: "assistant",
+				content: toAssistantTextContent(
+					`[Worker ${message.workerType || "task"}${message.workerStatus ? `:${message.workerStatus}` : ""}]\n${message.content}`,
+				),
+			} as unknown as Parameters<SessionManager["appendMessage"]>[0]);
+			continue;
+		}
+
+		if (message.role === "assistant") {
+			sessionManager.appendMessage({
+				role: "assistant",
+				content: toAssistantTextContent(message.content),
+			} as unknown as Parameters<SessionManager["appendMessage"]>[0]);
+			continue;
+		}
+
+		sessionManager.appendMessage({
+			role: message.role,
+			content: message.content,
+		} as unknown as Parameters<SessionManager["appendMessage"]>[0]);
+	}
 }
 
 function resolveDefaultModelSelection(): {
@@ -473,9 +394,10 @@ function createPiCustomTools(
 			name: "send_message",
 			label: "Send Message",
 			description:
-				"Send a proactive Telegram update to the user while the live run is still working.",
+				"Send a proactive Telegram update to the user while the live run is still working. This is the explicit way to speak to the user during a run.",
 			promptSnippet: "Send a proactive update to the user",
 			promptGuidelines: [
+				"You can use send_message multiple times during the same run.",
 				"Use send_message when you need to share progress, a partial answer, a clarification, or a concise result before the run is completely finished.",
 				"If the user should see an image, screenshot, chart, or file, include the workspace path(s) in files; mentioning them in text is not enough.",
 				"Keep Telegram updates mobile-friendly: short paragraphs, bullets, numbered steps, and one idea per line.",
@@ -518,7 +440,6 @@ function createPiCustomTools(
 				);
 
 				if (result) {
-					state.usedSendMessage = true;
 					store.addMessage(
 						conversationId,
 						"assistant",
@@ -552,7 +473,7 @@ function createPiCustomTools(
 		name: "ask_user",
 		label: "Ask User",
 		description:
-			"Pause the run and ask the Telegram user one clear question when you cannot continue.",
+			"Pause the run and ask the Telegram user one clear question when you cannot continue. This blocks until the answer arrives.",
 		promptSnippet: "Pause and ask one clear question",
 		promptGuidelines: [
 			"Use ask_user only when the run cannot continue without exactly one missing answer.",
@@ -611,29 +532,6 @@ function createSessionContextSnapshot(state: LiveRunState): LiveRunSummary {
 		startedAt: state.startedAt,
 		updatedAt: state.updatedAt,
 	});
-}
-
-async function deliverFinalAssistantResponse(
-	conversationId: string,
-	state: LiveRunState,
-	deliverer: TelegramDeliverer,
-	store: LiveRunConversationStore,
-	responseText: string,
-): Promise<boolean> {
-	if (state.turnResponseDelivered) {
-		return false;
-	}
-
-	// Claim the final reply before awaiting Telegram so a concurrent agent_end
-	// can't send the same text a second time.
-	state.turnResponseDelivered = true;
-
-	const delivered = await deliverer(responseText, []);
-	if (delivered) {
-		store.addMessage(conversationId, "assistant", responseText, "telegram");
-	}
-
-	return delivered;
 }
 
 export class LiveRunCoordinator {
@@ -728,7 +626,6 @@ export class LiveRunCoordinator {
 
 		const summary = createSessionContextSnapshot(state);
 		state.rerunRequested = false;
-		state.usedSendMessage = false;
 		state.status = "idle";
 		state.question = undefined;
 		state.startedAt = undefined;
@@ -788,8 +685,6 @@ export class LiveRunCoordinator {
 				activeRun?.status === "blocked" ? activeRun.startedAt : undefined,
 			updatedAt: activeRun?.updatedAt || Date.now(),
 			rerunRequested: false,
-			usedSendMessage: false,
-			turnResponseDelivered: false,
 			session: null,
 			sessionLoading: null,
 			unsubscribe: null,
@@ -942,8 +837,6 @@ export class LiveRunCoordinator {
 				const now = Date.now();
 				state.startedAt ??= now;
 				state.updatedAt = now;
-				state.usedSendMessage = false;
-				state.turnResponseDelivered = false;
 				writeActiveRunMetadata(this.store, conversationId, state);
 				break;
 			}
@@ -981,18 +874,6 @@ export class LiveRunCoordinator {
 								question?: string;
 						  }
 						| undefined;
-
-					if (pendingTool.toolName === "send_message") {
-						const delivered =
-							result?.delivered ??
-							result?.messageDelivered ??
-							result?.details?.delivered ??
-							result?.details?.messageDelivered ??
-							false;
-						if (delivered) {
-							state.usedSendMessage = true;
-						}
-					}
 
 					if (pendingTool.toolName === "ask_user") {
 						const question =
@@ -1036,37 +917,11 @@ export class LiveRunCoordinator {
 		conversationId: string,
 		state: LiveRunState,
 		session: LiveConversationSession,
-		event: Extract<AgentSessionEvent, { type: "turn_end" }>,
+		_event: Extract<AgentSessionEvent, { type: "turn_end" }>,
 	): Promise<void> {
 		const hasPendingMessages =
 			Boolean(session.pendingMessageCount && session.pendingMessageCount > 0) ||
 			state.rerunRequested;
-		const assistantText =
-			extractTextFromMessage(event.message) || session.getLastAssistantText();
-		const assistantFailureText = extractAssistantFailureText(event.message);
-
-		if (
-			state.status !== "blocked" &&
-			!state.usedSendMessage &&
-			!hasPendingMessages &&
-			(assistantText || assistantFailureText)
-		) {
-			const responseText = assistantText || assistantFailureText || "";
-			if (assistantFailureText && !assistantText) {
-				console.warn(
-					`[LiveRun] Assistant turn ended with error: ${assistantFailureText}`,
-				);
-			}
-			await deliverFinalAssistantResponse(
-				conversationId,
-				state,
-				this.deliverer,
-				this.store,
-				responseText,
-			);
-		}
-
-		state.usedSendMessage = false;
 		state.updatedAt = Date.now();
 
 		if (state.status !== "blocked" && !hasPendingMessages) {
@@ -1083,43 +938,11 @@ export class LiveRunCoordinator {
 		conversationId: string,
 		state: LiveRunState,
 		session: LiveConversationSession,
-		event: Extract<AgentSessionEvent, { type: "agent_end" }>,
+		_event: Extract<AgentSessionEvent, { type: "agent_end" }>,
 	): Promise<void> {
 		const hasPendingMessages =
 			Boolean(session.pendingMessageCount && session.pendingMessageCount > 0) ||
 			state.rerunRequested;
-
-		if (
-			state.status !== "blocked" &&
-			!state.usedSendMessage &&
-			!state.turnResponseDelivered &&
-			!hasPendingMessages
-		) {
-			const lastAssistant = [...event.messages]
-				.reverse()
-				.find((message) => message.role === "assistant");
-			const assistantText =
-				extractTextFromMessage(lastAssistant) || session.getLastAssistantText();
-			const assistantFailureText = extractAssistantFailureText(lastAssistant);
-
-			if (assistantText || assistantFailureText) {
-				const responseText = assistantText || assistantFailureText || "";
-				if (assistantFailureText && !assistantText) {
-					console.warn(
-						`[LiveRun] Agent ended with error: ${assistantFailureText}`,
-					);
-				}
-				await deliverFinalAssistantResponse(
-					conversationId,
-					state,
-					this.deliverer,
-					this.store,
-					responseText,
-				);
-			}
-		}
-
-		state.usedSendMessage = false;
 		state.updatedAt = Date.now();
 
 		if (state.status !== "blocked" && !hasPendingMessages) {

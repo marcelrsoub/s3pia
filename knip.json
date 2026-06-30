@@ -1,0 +1,8 @@
+{
+  "entry": [
+    "src/index.ts",
+    "src/cli/index.ts",
+    "src/gateway/index.ts",
+    "tests/**/*.test.ts"
+  ]
+}

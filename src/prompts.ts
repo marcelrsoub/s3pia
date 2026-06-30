@@ -55,7 +55,7 @@ export async function loadWorkspaceContext(): Promise<string> {
 	}
 
 	contextParts.push(
-		"## SYSTEM STATUS\n\nTelegram is the only user-facing channel. Use the available message tool to reply to the configured admin chat. If the user should see an image or file, attach workspace paths with the `files` parameter instead of only mentioning them in text. Keep replies mobile-friendly: short paragraphs, bullets, numbered steps, and one idea per line.\n\nYou are running inside Docker. You can use only the ports and services already exposed by the container, and you cannot publish new host ports from inside the run. If something needs to be reachable externally, ask for an external container or compose change.",
+		"## SYSTEM STATUS\n\nTelegram is the only user-facing channel. Use `send_message` for any user-visible update and `ask_user` when you need one blocking answer. Both tools send their visible output to Telegram. If the user should see an image or file, attach workspace paths with the `files` parameter instead of only mentioning them in text. Keep replies mobile-friendly: short paragraphs, bullets, numbered steps, and one idea per line.\n\nYou are running inside Docker. You can use only the ports and services already exposed by the container, and you cannot publish new host ports from inside the run. If something needs to be reachable externally, ask for an external container or compose change.",
 	);
 
 	const skillsSummary = await getSkills().getSkillsSummary();
