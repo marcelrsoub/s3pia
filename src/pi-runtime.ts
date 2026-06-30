@@ -259,6 +259,11 @@ function isWorkspaceContextFile(path: string): boolean {
 	);
 }
 
+function isWorkspaceSkillFile(path: string): boolean {
+	const normalized = path.replace(/\\/g, "/");
+	return normalized === "/app/ws/skills" || normalized.startsWith("/app/ws/skills/");
+}
+
 function shouldClearWorkspaceCacheFromToolResult(event: {
 	toolName: string;
 	input: Record<string, unknown>;
@@ -267,7 +272,10 @@ function shouldClearWorkspaceCacheFromToolResult(event: {
 		return false;
 	}
 	const path = event.input.path;
-	return typeof path === "string" && isWorkspaceContextFile(path);
+	return (
+		typeof path === "string" &&
+		(isWorkspaceContextFile(path) || isWorkspaceSkillFile(path))
+	);
 }
 
 function toAssistantTextContent(

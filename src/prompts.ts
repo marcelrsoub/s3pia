@@ -1,4 +1,5 @@
 import { LIVE_AGENT_POLICY, LIVE_SKILLS_POINTER } from "./agent-policy.js";
+import { getSkills } from "./skills.js";
 import { workspacePath } from "./workspace.js";
 
 const WORKSPACE = workspacePath();
@@ -46,7 +47,10 @@ export async function loadWorkspaceContext(): Promise<string> {
 	}
 
 	contextParts.push(LIVE_AGENT_POLICY);
-	contextParts.push(`## SKILLS\n\n${LIVE_SKILLS_POINTER}`);
+	const skillsSummary = await getSkills().getSkillsSummary();
+	contextParts.push(
+		`## SKILLS\n\n${LIVE_SKILLS_POINTER}\n\n${skillsSummary}`,
+	);
 	contextParts.push(
 		"## SYSTEM STATUS\n\nYou are running inside Docker. You can use only the ports and services already exposed by the container, and you cannot publish new host ports from inside the run. If something needs to be reachable externally, ask for an external container or compose change.",
 	);

@@ -34,9 +34,9 @@ curl -s -X POST "https://openrouter.ai/api/v1/audio/speech" \
 ### Recommended OpenRouter Models Today
 
 - `hexgrad/kokoro-82m` - Cheapest practical default for short spoken replies and voice notes. OpenRouter lists it at `$0.62/M characters`.
-- `openai/gpt-audio-mini` - Good general-purpose fallback when you want stronger OpenAI-style voices.
-- `mistralai/voxtral-mini-tts-2603` - Good low-cost alternative if you want a non-OpenAI provider voice path.
-- `google/gemini-3.1-flash-tts-preview` - Strong expressive option when you want rich delivery and multilingual coverage, but it is much more expensive.
+- `openai/gpt-audio-mini` - Good balanced fallback if you want stronger voice consistency. OpenRouter lists it at `$0.60/M input` and `$2.40/M output`.
+- `mistralai/voxtral-mini-tts-2603` - Good low-cost alternative if you want a non-OpenAI provider voice path. OpenRouter lists it at `$16/M characters`.
+- `google/gemini-3.1-flash-tts-preview` - Best-quality expressive option when you want rich delivery and multilingual coverage. OpenRouter lists it at `$1/M input` and `$20/M output`.
 
 ### Notes
 
@@ -44,6 +44,25 @@ curl -s -X POST "https://openrouter.ai/api/v1/audio/speech" \
 - Keep output short for Telegram-friendly responses.
 - Check the model page for supported voice IDs before using a model in production.
 - After sending the file to the user, delete the local audio file to keep the workspace clean.
+
+### Realism Tags
+
+Use inline audio tags only on models that document support for them. Keep them lowercase and bracketed unless the model docs say otherwise.
+
+Verified examples today:
+
+- `[whispers]`
+- `[laughs]`
+- `[excited]`
+
+Use these to shape delivery for things like:
+
+- laughter
+- whispers
+- emphasis
+- pacing
+
+If you need a cough-like beat or another nonverbal sound, prefer a model that explicitly documents support for that tag rather than inventing one.
 
 ## Groq TTS
 
@@ -69,6 +88,11 @@ curl -s -X POST "https://api.groq.com/openai/v1/audio/speech" \
 
 - `canopylabs/orpheus-v1-english` - The current Groq English TTS model. Groq prices it at `$22 / 1 million characters`.
 - `canopylabs/orpheus-arabic-saudi` - Groq’s Arabic Saudi dialect model, priced at `$40 / 1 million characters`.
+
+### Expressive Notes
+
+- `x-ai/grok-voice-tts-1.0` on OpenRouter supports inline speech tags for pauses, emphasis, pitch, speed, and vocal style.
+- If you want the most expressive output, prefer a model with inline audio tags over the cheapest voice-only option.
 
 ### Workflow
 
