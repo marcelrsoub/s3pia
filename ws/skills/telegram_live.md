@@ -4,6 +4,7 @@ Use this skill for the live Telegram conversation with the admin.
 
 ## Core Tools
 
+- These are real runtime tools, not workarounds:
 - `send_message` sends a Telegram update
 - `refresh_thread` reloads the latest conversation state
 - `ask_user` pauses the run and asks one blocking question
@@ -14,6 +15,7 @@ Use this skill for the live Telegram conversation with the admin.
 - Keep replies short, clear, and mobile-friendly.
 - Use `files` when you want the user to see an image or document.
 - Do not rely on mentioning filenames in text alone.
+- Do not use bash/curl to impersonate Telegram output when `send_message` is available.
 - Use `refresh_thread` before continuing if new user messages may have arrived while you were working.
 
 ## When To Use Each Tool
