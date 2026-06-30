@@ -1,55 +1,31 @@
 <p align="center"><img src="frontend/public/logo.svg" alt="S3pia" width="400"></p>
 
-A simple self-contained AI assistant, inspired by OpenClaw, that runs in a single Docker container. Simple, self-contained, and ready to deploy.
+S3pia is a self-contained AI assistant that runs in one Docker container. It chats through Telegram, uses OpenRouter for AI, and keeps its state in a persistent workspace.
 
-## Features
-
-- **Single Docker Container** — Everything runs in one container. No complex setup, no external dependencies.
-- **Config UI** — View Telegram status and edit config in the browser
-- **Telegram** — The only interaction channel
-- **Memory** — Persistent long-term memory across conversations
-- **Soul & Identity** — Customizable personality that evolves over time
-- **Scheduled Tasks** — Cron-style background jobs and reminders
-- **Skills** — Prebuilt recipes + agent can create its own skills
-- **Public Pages** — Agent can generate local pages under `public_pages/`
-- **Browser Access** — Agent can browse the web
-- **Image Generation** — Generate images with FAL AI
-
-**Prebuilt Skills:** Web Browsing • Image Generation • Task Scheduling
-**Generated Pages:** `http://localhost:3210/pages/<page-name>/`
-
-## Install
+## Quick Start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/marcelrsoub/s3pia/main/install.sh | bash
 ```
 
-One command. The installer checks Docker, clones the repo, and starts a single container.
+Then open `http://localhost:3210` to edit config and check Telegram status.
 
-Then open **http://localhost:3210** to edit your `.env` settings and check Telegram status.
+## What It Includes
 
-## Updating
-
-Run the same installer command again when you want to update:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/marcelrsoub/s3pia/main/install.sh | bash
-```
-
-If S3pia is already installed, the installer detects the existing container. Choose preserve to keep every current volume binding intact.
+- Telegram-only interaction
+- Persistent memory, skills, tasks, and generated pages
+- Background execution for code changes and other work
+- Built-in and custom skills
+- A browser UI for config and status
 
 ## Requirements
 
-- [Docker](https://docs.docker.com/get-docker/)
+- Docker
 - An OpenRouter API key
 
 ## AI Backend
 
-S3pia now uses OpenRouter as its only supported LLM backend.
-
-| Service | Get Key |
-|---------|---------|
-| OpenRouter | [openrouter.ai](https://openrouter.ai) |
+OpenRouter is the only supported LLM backend.
 
 Set these values in `/app/ws/config/.env`:
 
@@ -58,76 +34,42 @@ OPENROUTER_API_KEY=your_key_here
 AI_MODEL=anthropic/claude-sonnet-4
 ```
 
-## How It Works
+## Telegram
 
-**Telegram messages drive S3pia. Tasks run in the background:**
-- S3pia processes your messages
-- Code changes and tasks execute asynchronously
-- Results appear as follow-up messages automatically
+Telegram is the only user-facing channel. Messages can trigger background work, and results come back as follow-up messages. Telegram updates support simple markdown for bold, inline code, links, and bullets.
 
-```
-You: Update my IDENTITY.md to say my name is Marcel
+## Workspace
 
-S3pia: I'll update your IDENTITY.md for you.
+Your data lives in a Docker volume. The repo's `ws/` folder is the seed template copied into `/app/ws` on first start.
 
-[background execution...]
+Key paths:
 
-S3pia: Done! Updated your IDENTITY.md.
-```
+- `/app/ws/config/.env` - API keys and settings
+- `/app/ws/memory/context.md` - long-term memory
+- `/app/ws/tasks/scheduled.md` - scheduled tasks
+- `/app/ws/skills/*.md` - built-in and custom skills
+- `/app/ws/public_pages/` - generated local pages
 
-## File Structure
+## Scheduling
 
-Your data lives in a Docker volume, and the repo's `ws/` folder is the seed template that gets copied into `/app/ws` on first start. The agent reads and writes the live `/app/ws` tree while it runs:
-
-```
-/app/ws/
-├── BOOTSTRAP.md     # Initial setup instructions
-├── IDENTITY.md       # Bot's identity (evolves over time)
-├── USER.md           # Info about you
-├── SOUL.md           # Bot's personality
-├── config/           # API keys and settings
-├── memory/           # Long-term memory
-│   └── context.md
-├── skills/           # Prebuilt and custom skills
-├── public_pages/     # Agent-generated local pages
-├── tasks/            # Scheduled tasks
-│   └── scheduled.md
-└── temp/            # Temporary files
-```
-
-Edit these files directly — changes are immediately available.
-
-## Scheduling & Tasks
-
-S3pia uses a file-system based scheduling mechanism (inspired by OpenClaw):
-
-- Tasks are defined in `tasks/scheduled.md`
-- Agent reads tasks every 30 minutes
-- Tasks can be one-time or recurring (cron-style)
-- The agent can create its own scheduled tasks
+- Tasks live in `tasks/scheduled.md`
+- The agent checks them every 10 minutes
+- Tasks can be one-time or recurring
 
 ## Skills
 
-S3pia comes with prebuilt skills for common tasks:
-- **Web Browsing** — Search the web, read articles
-- **Image Generation** — Create images with FAL AI
-- **Task Scheduling** — Schedule reminders and background jobs
-
-The agent can also create custom skills by writing markdown recipes to the `skills/` folder.
+- Built-in and custom skills live in `skills/`
+- The agent can create new skills as markdown recipes
 
 ## Public Pages
 
-S3pia can generate local web pages in `public_pages/` and serve them from the main app.
+- Write pages to `public_pages/<name>/index.html`
+- Open them at `http://localhost:3210/pages/<name>/`
+- Use a tunnel if you want to expose a page externally
 
-- Write the page into `public_pages/<name>/index.html`
-- Add CSS, JS, and assets beside it
-- Open it at `http://localhost:3210/pages/<name>/`
+## Additional Volumes
 
-If you want to expose a page outside the local machine, use a tunnel such as cloudflared, ngrok, or an SSH reverse tunnel.
-
-## Mounting Additional Volumes
-
-You can mount an additional directory to give the agent access to external data:
+You can mount extra folders for the agent to access external files.
 
 ```yaml
 services:
@@ -135,38 +77,30 @@ services:
     image: marcelrsoub/s3pia:latest
     container_name: s3pia
     restart: unless-stopped
-    
     volumes:
       - s3pia-workspace:/app/ws
-      - /path/on/host/custom:/app/custom        # Access to external folder
-    
+      - /path/on/host/custom:/app/custom
     ports:
       - "3210:3210"
-    
     environment:
       - TELEGRAM_ENABLED=true
 ```
 
-The agent can then access this path directly:
-- `list_dir /custom` — list contents of mounted volume
-- `read_file /custom/file.txt` — read files in mounted volume
-- `write_file /custom/output.txt` — write files to mounted volume
-
 ## Commands
 
 ```bash
-docker-compose up -d --build    # Start / rebuild
-docker-compose down              # Stop
-docker logs s3pia -f          # View logs
-docker-compose exec s3pia sh  # Shell into container
+docker-compose up -d --build
+docker-compose down
+docker logs s3pia -f
+docker-compose exec s3pia sh
 ```
 
-## Documentation
+## Docs
 
-- [Deployment Guide](DEPLOY.md) — Deploy to NAS, VPS, or any Docker host
-- [Telegram Setup](docs/telegram.md) — Connect your Telegram bot
-- [Architecture](docs/architecture.md) — Developer-facing design compass for how we build S3pia
-- [Full Index](docs/INDEX.md) — All documentation
+- [Deployment Guide](DEPLOY.md)
+- [Telegram Setup](docs/telegram.md)
+- [Architecture](docs/architecture.md)
+- [Full Index](docs/INDEX.md)
 
 ## License
 
