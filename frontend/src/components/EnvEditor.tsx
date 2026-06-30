@@ -52,6 +52,7 @@ type EnvEditorProps = {
 	onOpenChange?: (open: boolean) => void;
 	onSaved?: () => void;
 	inline?: boolean;
+	framed?: boolean;
 };
 
 type AiProviderId = "openrouter" | "openai-codex";
@@ -148,6 +149,7 @@ export function EnvEditor({
 	onOpenChange,
 	onSaved,
 	inline = false,
+	framed = true,
 }: EnvEditorProps) {
 	const [envContent, setEnvContent] = useState("");
 	const [isLoading, setIsLoading] = useState(false);
@@ -638,6 +640,10 @@ export function EnvEditor({
 	);
 
 	if (inline) {
+		if (!framed) {
+			return editorArea;
+		}
+
 		return (
 			<Card className="gap-0 py-0 overflow-hidden">
 				<CardHeader className="border-b px-6 py-5">

@@ -41,9 +41,10 @@ interface TelegramStatusCardProps {
 	isCancelling: boolean;
 	onRefresh: () => void;
 	onCancel: () => void;
+	framed?: boolean;
 }
 
-function getStatusLabel(
+export function getStatusLabel(
 	status: TelegramStatus | null,
 	isLoading: boolean,
 ): string {
@@ -76,6 +77,7 @@ export function TelegramStatusCard({
 	isCancelling,
 	onRefresh,
 	onCancel,
+	framed = true,
 }: TelegramStatusCardProps) {
 	const connectionState = !status
 		? "not_configured"
@@ -87,6 +89,81 @@ export function TelegramStatusCard({
 
 	const errorText = status?.errorMessage || status?.error;
 	const canCancel = Boolean(status?.canCancel && !isCancelling);
+
+	const content = (
+		<div className="space-y-4">
+			<div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
+				<ConnectionStatusIndicator status={connectionState} />
+				<span>{getStatusLabel(status, isLoading)}</span>
+			</div>
+
+			{errorText && (
+				<div className="flex items-start gap-3 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+					<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+					<span>{errorText}</span>
+				</div>
+			)}
+
+			<div className="grid gap-3 text-sm sm:grid-cols-2">
+				<div className="rounded-lg border bg-muted/30 px-4 py-3">
+					<div className="text-muted-foreground">Channel</div>
+					<div className="font-medium">{status?.name || "telegram"}</div>
+				</div>
+				<div className="rounded-lg border bg-muted/30 px-4 py-3">
+					<div className="text-muted-foreground">State</div>
+					<div className="font-medium">
+						{status ? (status.configured === false ? "No" : "Yes") : "Unknown"}
+					</div>
+				</div>
+			</div>
+
+			{status?.currentRun && (
+				<div className="space-y-3 rounded-xl border bg-card/70 p-4">
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<div className="font-medium">Current run</div>
+						<div className="text-xs text-muted-foreground">
+							{status.currentRun.source || "telegram"}
+							{status.rerunRequested ? " · update waiting" : ""}
+						</div>
+					</div>
+					<div className="space-y-2 text-sm">
+						<div className="rounded-lg border bg-muted/30 px-4 py-3">
+							<div className="text-muted-foreground">Preview</div>
+							<div className="font-medium leading-relaxed">
+								{status.currentRun.preview || "No preview available"}
+							</div>
+						</div>
+						{status.currentRun.question && (
+							<div className="rounded-lg border bg-muted/30 px-4 py-3">
+								<div className="text-muted-foreground">Question</div>
+								<div className="font-medium leading-relaxed">
+									{status.currentRun.question}
+								</div>
+							</div>
+						)}
+						<div className="grid gap-3 sm:grid-cols-2">
+							<div className="rounded-lg border bg-muted/30 px-4 py-3">
+								<div className="text-muted-foreground">Started</div>
+								<div className="font-medium">
+									{formatAge(status.currentRun.startedAt) || "Unknown"}
+								</div>
+							</div>
+							<div className="rounded-lg border bg-muted/30 px-4 py-3">
+								<div className="text-muted-foreground">Updated</div>
+								<div className="font-medium">
+									{formatAge(status.currentRun.updatedAt) || "Unknown"}
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			)}
+		</div>
+	);
+
+	if (!framed) {
+		return content;
+	}
 
 	return (
 		<Card className="overflow-hidden">
@@ -127,78 +204,7 @@ export function TelegramStatusCard({
 					</div>
 				</div>
 			</CardHeader>
-			<CardContent className="space-y-4 py-5">
-				<div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
-					<ConnectionStatusIndicator status={connectionState} />
-					<span>{getStatusLabel(status, isLoading)}</span>
-				</div>
-
-				{errorText && (
-					<div className="flex items-start gap-3 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-						<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-						<span>{errorText}</span>
-					</div>
-				)}
-
-				<div className="grid gap-3 sm:grid-cols-2 text-sm">
-					<div className="rounded-lg border bg-muted/30 px-4 py-3">
-						<div className="text-muted-foreground">Channel</div>
-						<div className="font-medium">{status?.name || "telegram"}</div>
-					</div>
-					<div className="rounded-lg border bg-muted/30 px-4 py-3">
-						<div className="text-muted-foreground">State</div>
-						<div className="font-medium">
-							{status
-								? status.configured === false
-									? "No"
-									: "Yes"
-								: "Unknown"}
-						</div>
-					</div>
-				</div>
-
-				{status?.currentRun && (
-					<div className="rounded-xl border bg-card/70 p-4 space-y-3">
-						<div className="flex flex-wrap items-center justify-between gap-2">
-							<div className="font-medium">Current run</div>
-							<div className="text-xs text-muted-foreground">
-								{status.currentRun.source || "telegram"}
-								{status.rerunRequested ? " · update waiting" : ""}
-							</div>
-						</div>
-						<div className="space-y-2 text-sm">
-							<div className="rounded-lg border bg-muted/30 px-4 py-3">
-								<div className="text-muted-foreground">Preview</div>
-								<div className="font-medium leading-relaxed">
-									{status.currentRun.preview || "No preview available"}
-								</div>
-							</div>
-							{status.currentRun.question && (
-								<div className="rounded-lg border bg-muted/30 px-4 py-3">
-									<div className="text-muted-foreground">Question</div>
-									<div className="font-medium leading-relaxed">
-										{status.currentRun.question}
-									</div>
-								</div>
-							)}
-							<div className="grid gap-3 sm:grid-cols-2">
-								<div className="rounded-lg border bg-muted/30 px-4 py-3">
-									<div className="text-muted-foreground">Started</div>
-									<div className="font-medium">
-										{formatAge(status.currentRun.startedAt) || "Unknown"}
-									</div>
-								</div>
-								<div className="rounded-lg border bg-muted/30 px-4 py-3">
-									<div className="text-muted-foreground">Updated</div>
-									<div className="font-medium">
-										{formatAge(status.currentRun.updatedAt) || "Unknown"}
-									</div>
-								</div>
-							</div>
-						</div>
-					</div>
-				)}
-			</CardContent>
+			<CardContent className="py-5">{content}</CardContent>
 		</Card>
 	);
 }
