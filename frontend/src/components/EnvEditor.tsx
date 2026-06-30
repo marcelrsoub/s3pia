@@ -61,7 +61,22 @@ type EnvEditorProps = {
 	inline?: boolean;
 };
 
+type AiProviderId = "openrouter" | "openai-codex";
+
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+type AiProviderOption = {
+	id: AiProviderId;
+	label: string;
+	auth: {
+		configured: boolean;
+		label?: string;
+		source?: string;
+	};
+	configured: boolean;
+	modelCount: number;
+	selected: boolean;
+};
 
 type AiModelOption = {
 	ref: string;
@@ -85,9 +100,17 @@ type ThinkingLevelOption = {
 type AiPreferences = {
 	selectedModelRef?: string;
 	effectiveModelRef?: string;
+	selectedProviderId?: AiProviderId;
 	thinkingLevel: ThinkingLevel;
+	providerOptions: AiProviderOption[];
 	models: AiModelOption[];
 	thinkingLevels: ThinkingLevelOption[];
+};
+
+type AiModelsResponse = {
+	provider: AiProviderId;
+	configured: boolean;
+	models: AiModelOption[];
 };
 
 type ChatGptLoginState = {
@@ -107,6 +130,7 @@ type AiStatus = {
 	provider?: string;
 	model?: string;
 	selectedModelRef?: string;
+	selectedProviderId?: AiProviderId;
 	effectiveModelRef?: string;
 	thinkingLevel?: ThinkingLevel;
 	errorMessage?: string;
@@ -141,9 +165,12 @@ export function EnvEditor({
 	const [aiPreferences, setAiPreferences] = useState<AiPreferences | null>(
 		null,
 	);
+	const [selectedProviderId, setSelectedProviderId] =
+		useState<AiProviderId>("openai-codex");
 	const [selectedModelRef, setSelectedModelRef] = useState("");
 	const [selectedThinkingLevel, setSelectedThinkingLevel] =
 		useState<ThinkingLevel>("medium");
+	const [providerModels, setProviderModels] = useState<AiModelOption[]>([]);
 	const [isSavingAiPreferences, setIsSavingAiPreferences] = useState(false);
 	const [aiPreferencesMessage, setAiPreferencesMessage] = useState<
 		string | null
@@ -191,6 +218,12 @@ export function EnvEditor({
 				if (!response.ok) return;
 				const payload = (await response.json()) as AiPreferences;
 				setAiPreferences(payload);
+				const nextProviderId =
+					payload.selectedProviderId ||
+					payload.providerOptions.find((provider) => provider.selected)?.id ||
+					payload.providerOptions.find((provider) => provider.configured)?.id ||
+					"openai-codex";
+				setSelectedProviderId(nextProviderId);
 				setSelectedModelRef(payload.selectedModelRef ?? "");
 				setSelectedThinkingLevel(payload.thinkingLevel ?? "medium");
 			} catch {
@@ -217,6 +250,35 @@ export function EnvEditor({
 
 		loadAiStatus();
 	}, [inline, open]);
+
+	useEffect(() => {
+		if (!inline && !open) return;
+
+		const loadProviderModels = async () => {
+			try {
+				const response = await fetch(
+					`/api/ai/models?provider=${selectedProviderId}`,
+				);
+				if (!response.ok) {
+					setProviderModels([]);
+					return;
+				}
+				const payload = (await response.json()) as AiModelsResponse;
+				const models = payload.models ?? [];
+				setProviderModels(models);
+				setSelectedModelRef((current) => {
+					if (current && models.some((model) => model.ref === current)) {
+						return current;
+					}
+					return models[0]?.ref ?? "";
+				});
+			} catch {
+				// Non-fatal for the editor
+			}
+		};
+
+		loadProviderModels();
+	}, [inline, open, selectedProviderId]);
 
 	useEffect(() => {
 		if (!inline && !open) return;
@@ -313,9 +375,14 @@ export function EnvEditor({
 				);
 			}
 
-			if (payload && "models" in payload) {
+			if (payload && "providerOptions" in payload) {
 				setAiPreferences(payload);
-				setSelectedModelRef(payload.selectedModelRef ?? "");
+				const nextProviderId =
+					payload.selectedProviderId ||
+					payload.providerOptions.find((provider) => provider.selected)?.id ||
+					payload.providerOptions.find((provider) => provider.configured)?.id ||
+					selectedProviderId;
+				setSelectedProviderId(nextProviderId);
 				setSelectedThinkingLevel(payload.thinkingLevel ?? "medium");
 			}
 
@@ -337,6 +404,23 @@ export function EnvEditor({
 		} finally {
 			setIsSavingAiPreferences(false);
 		}
+	};
+
+	const providerOptions = aiPreferences?.providerOptions ?? [];
+	const selectedProviderOption =
+		providerOptions.find((provider) => provider.id === selectedProviderId) ??
+		providerOptions.find((provider) => provider.selected) ??
+		providerOptions.find((provider) => provider.configured) ??
+		providerOptions[0];
+	const visibleModels = providerModels;
+	const activeModelLabel = selectedModelRef
+		? visibleModels.find((model) => model.ref === selectedModelRef)?.name ||
+			selectedModelRef
+		: "Select a model";
+
+	const handleProviderChange = (nextProviderId: AiProviderId) => {
+		setSelectedProviderId(nextProviderId);
+		setSelectedModelRef("");
 	};
 
 	const handleSave = async () => {
@@ -404,13 +488,6 @@ export function EnvEditor({
 			description: "Use the strongest reasoning level the model supports.",
 		},
 	];
-	const modelOptions = aiPreferences?.models ?? [];
-	const activeModelLabel =
-		aiStatus?.metadata?.name ||
-		aiStatus?.effectiveModelRef ||
-		aiStatus?.selectedModelRef ||
-		"Auto";
-
 	const editorArea = (
 		<div className="space-y-4">
 			<div className="rounded-lg border bg-muted/20 px-4 py-3 space-y-3">
@@ -418,8 +495,9 @@ export function EnvEditor({
 					<div className="space-y-1">
 						<div className="text-sm font-medium">AI Providers</div>
 						<p className="text-xs text-muted-foreground">
-							Use OpenRouter or connect ChatGPT Plus here. The agent will pick
-							whichever provider is authenticated.
+							Pick a provider first, then choose from that provider&apos;s model
+							list. This keeps OpenRouter and ChatGPT Plus separate and much
+							easier to scan.
 						</p>
 					</div>
 					<div className="flex flex-wrap gap-2">
@@ -435,6 +513,68 @@ export function EnvEditor({
 								? "connected"
 								: "off"}
 						</Badge>
+					</div>
+				</div>
+
+				<div className="grid gap-4 md:grid-cols-[minmax(0,220px)_minmax(0,1fr)]">
+					<div className="space-y-2">
+						<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+							Provider
+						</div>
+						<select
+							className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+							value={selectedProviderId}
+							onChange={(event) =>
+								handleProviderChange(event.target.value as AiProviderId)
+							}
+						>
+							{providerOptions.map((provider) => (
+								<option
+									key={provider.id}
+									value={provider.id}
+									disabled={!provider.configured}
+								>
+									{provider.label}{" "}
+									{provider.configured
+										? `(${provider.modelCount} models)`
+										: "(connect first)"}
+								</option>
+							))}
+						</select>
+						<p className="text-xs text-muted-foreground">
+							{selectedProviderOption?.configured
+								? `${selectedProviderOption.label} is connected and ready.`
+								: "Connect a provider before picking a model."}
+						</p>
+					</div>
+
+					<div className="space-y-2">
+						<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+							Model
+						</div>
+						<select
+							className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+							value={selectedModelRef}
+							onChange={(event) => setSelectedModelRef(event.target.value)}
+							disabled={visibleModels.length === 0}
+						>
+							<option value="" disabled>
+								{visibleModels.length > 0
+									? "Choose a model"
+									: "No models available"}
+							</option>
+							{visibleModels.map((model) => (
+								<option key={model.ref} value={model.ref}>
+									{model.name}
+									{model.name !== model.modelId ? ` (${model.modelId})` : ""}
+								</option>
+							))}
+						</select>
+						<p className="text-xs text-muted-foreground">
+							{visibleModels.length > 0
+								? `${visibleModels.length} model${visibleModels.length === 1 ? "" : "s"} shown for ${selectedProviderOption?.label || "the selected provider"}.`
+								: "No models are available for this provider yet."}
+						</p>
 					</div>
 				</div>
 
@@ -455,7 +595,10 @@ export function EnvEditor({
 					{aiStatus?.provider && (
 						<Badge variant="secondary">Active: {aiStatus.provider}</Badge>
 					)}
-					<Badge variant="outline">Model: {activeModelLabel}</Badge>
+					<Badge variant="outline">
+						Model: {selectedProviderOption?.label || "Provider"} /{" "}
+						{activeModelLabel}
+					</Badge>
 					{aiStatus?.thinkingLevel && (
 						<Badge variant="outline">Reasoning: {aiStatus.thinkingLevel}</Badge>
 					)}
@@ -489,29 +632,6 @@ export function EnvEditor({
 				<div className="grid gap-4 md:grid-cols-2">
 					<div className="space-y-2">
 						<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-							Model
-						</div>
-						<select
-							className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-							value={selectedModelRef}
-							onChange={(event) => setSelectedModelRef(event.target.value)}
-						>
-							<option value="">Auto</option>
-							{modelOptions.map((model) => (
-								<option key={model.ref} value={model.ref}>
-									{model.name} ({model.ref})
-								</option>
-							))}
-						</select>
-						<p className="text-xs text-muted-foreground">
-							{selectedModelRef
-								? "This override is stored in the workspace and used for new sessions."
-								: "Auto lets S3pia pick the first authenticated model for the active provider."}
-						</p>
-					</div>
-
-					<div className="space-y-2">
-						<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
 							Reasoning
 						</div>
 						<select
@@ -542,7 +662,11 @@ export function EnvEditor({
 					</div>
 					<Button
 						onClick={handleSaveAiPreferences}
-						disabled={isSavingAiPreferences}
+						disabled={
+							isSavingAiPreferences ||
+							visibleModels.length === 0 ||
+							!selectedModelRef
+						}
 					>
 						{isSavingAiPreferences ? "Saving..." : "Save AI Settings"}
 					</Button>
@@ -607,8 +731,9 @@ export function EnvEditor({
 									Telegram messages
 								</li>
 								<li>
-									AI can run on OpenRouter or ChatGPT Plus. The model field is
-									an optional override rather than a hard requirement.
+									AI provider and model are selected above, so you usually do
+									not need to edit <code className="text-xs">AI_MODEL</code>{" "}
+									manually.
 								</li>
 							</ul>
 						</div>

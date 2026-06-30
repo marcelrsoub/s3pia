@@ -31,6 +31,7 @@ export interface Message {
 	role: "user" | "assistant" | "system" | "worker";
 	content: string;
 	timestamp: number;
+	source?: "telegram" | "web";
 	workerType?: "tool" | "bash";
 	workerStatus?: "started" | "completed" | "failed";
 	files?: Array<{
@@ -89,6 +90,7 @@ class ConversationStore {
 					role TEXT NOT NULL,
 					content TEXT NOT NULL,
 					timestamp INTEGER NOT NULL,
+					source TEXT,
 					worker_type TEXT,
 					worker_status TEXT,
 					FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
@@ -106,6 +108,11 @@ class ConversationStore {
 			// Migration: Add files column if it doesn't exist
 			try {
 				this.db.run("ALTER TABLE messages ADD COLUMN files TEXT");
+			} catch {
+				// Column already exists, ignore
+			}
+			try {
+				this.db.run("ALTER TABLE messages ADD COLUMN source TEXT");
 			} catch {
 				// Column already exists, ignore
 			}
@@ -134,12 +141,13 @@ class ConversationStore {
 			for (const conv of convs) {
 				const messages = this.db
 					.query(
-						"SELECT role, content, timestamp, worker_type, worker_status, files FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC",
+						"SELECT role, content, timestamp, source, worker_type, worker_status, files FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC",
 					)
 					.all(conv.id) as Array<{
 					role: string;
 					content: string;
 					timestamp: number;
+					source?: string;
 					worker_type?: string;
 					worker_status?: string;
 					files?: string;
@@ -151,6 +159,7 @@ class ConversationStore {
 						role: m.role as "user" | "assistant" | "system" | "worker",
 						content: m.content,
 						timestamp: m.timestamp,
+						source: m.source as "telegram" | "web" | undefined,
 						workerType: m.worker_type as "tool" | "bash" | undefined,
 						workerStatus: m.worker_status as
 							| "started"
@@ -268,6 +277,7 @@ class ConversationStore {
 		conversationId: string,
 		role: "user" | "assistant" | "worker",
 		content: string,
+		source?: "telegram" | "web",
 		workerType?: "tool" | "bash",
 		workerStatus?: "started" | "completed" | "failed",
 		files?: Message["files"],
@@ -281,6 +291,7 @@ class ConversationStore {
 			role,
 			content,
 			timestamp: Date.now(),
+			source,
 			workerType,
 			workerStatus,
 			files,
@@ -310,13 +321,14 @@ class ConversationStore {
 		if (this.db) {
 			try {
 				this.db.run(
-					`INSERT INTO messages (conversation_id, role, content, timestamp, worker_type, worker_status, files)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+					`INSERT INTO messages (conversation_id, role, content, timestamp, source, worker_type, worker_status, files)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 					[
 						conversationId,
 						role,
 						content,
 						message.timestamp,
+						source || null,
 						workerType || null,
 						workerStatus || null,
 						files ? JSON.stringify(files) : null,

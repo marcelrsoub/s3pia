@@ -7,7 +7,11 @@
  * Inspired by nanobot: https://github.com/HKUDS/nanobot
  */
 
-import { getAiProviders, getResolvedAiModelMetadata } from "../ai.js";
+import {
+	getAiPreferences,
+	getAiProviders,
+	getResolvedAiModelMetadata,
+} from "../ai.js";
 import {
 	getAllEnvVarsWithMetadata,
 	getEnvStatus,
@@ -33,11 +37,20 @@ export async function statusCommand(): Promise<void> {
 	console.log("");
 
 	// AI status
-	const aiModel = getEnvVar("AI_MODEL") || "(auto)";
+	const aiPreferences = getAiPreferences();
 	const providers = getAiProviders();
 	const metadata = getResolvedAiModelMetadata(
-		getEnvVar("AI_MODEL") || undefined,
+		aiPreferences.selectedModelRef || aiPreferences.effectiveModelRef,
 	);
+	const providerLabel =
+		aiPreferences.providerOptions.find(
+			(option) => option.id === aiPreferences.selectedProviderId,
+		)?.label ||
+		metadata?.provider ||
+		"unconfigured";
+	const modelLabel = metadata
+		? `${metadata.name} (${metadata.provider}/${metadata.modelId})`
+		: aiPreferences.effectiveModelRef || "(auto)";
 	const activeProvider = metadata?.provider
 		? metadata.provider
 		: providers["openai-codex"].configured
@@ -46,8 +59,9 @@ export async function statusCommand(): Promise<void> {
 				? "openrouter"
 				: "unconfigured";
 	console.log("AI Backend:");
-	console.log(`  Provider: ${activeProvider}`);
-	console.log(`  Model: ${aiModel}`);
+	console.log(`  Provider: ${providerLabel}`);
+	console.log(`  Model: ${modelLabel}`);
+	console.log(`  Active backend: ${activeProvider}`);
 	console.log(
 		`  OpenRouter: ${providers.openrouter.configured ? "connected" : "not connected"}`,
 	);
@@ -233,7 +247,7 @@ Commands:
 
 Examples:
   bun run src/cli/index.ts status
-  bun run src/cli/index.ts config get AI_MODEL
+  bun run src/cli/index.ts config get OPENROUTER_API_KEY
   bun run src/cli/index.ts gateway start
 `);
 	}

@@ -4,7 +4,11 @@
  * Configuration, status, and Telegram management only.
  */
 
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import {
+	type AiModelOption,
+	type AiProviderId,
+	type AiProviderModelsResponse,
 	getAiPreferences,
 	getAiProviders,
 	getChatGptLoginState,
@@ -19,7 +23,6 @@ import {
 	getEnvFileContent,
 	getEnvSchema,
 	getEnvStatus,
-	getEnvVar,
 	isEnvConfigured,
 	loadEnvFile,
 	updateManyEnvVars,
@@ -27,7 +30,6 @@ import {
 } from "./env.js";
 import { getGateway } from "./gateway/manager.js";
 import { getLiveRunCoordinator } from "./live-run.js";
-import { getOpenRouterModelRegistry } from "./openrouter.js";
 import { reinitializeAdminUser } from "./telegram-auth.js";
 import { workspacePath } from "./workspace.js";
 
@@ -69,13 +71,6 @@ export async function handleUpdateEnv(request: Request): Promise<Response> {
 		await Bun.$`mkdir -p ${workspacePath("config")}`;
 		await Bun.write(envFile, content);
 		await loadEnvFile();
-		if (getEnvVar("OPENROUTER_API_KEY")) {
-			void getOpenRouterModelRegistry()
-				.refresh()
-				.catch((err) => {
-					console.warn("[Config] Failed to refresh OpenRouter metadata:", err);
-				});
-		}
 
 		reinitializeAdminUser();
 		await getGateway().reinitializeTelegramChannel();
@@ -112,13 +107,6 @@ export async function handleUpdateConfig(request: Request): Promise<Response> {
 			"ADMIN_TELEGRAM_ID",
 			"TELEGRAM_ENABLED",
 		];
-		if ("OPENROUTER_API_KEY" in updates || "AI_MODEL" in updates) {
-			void getOpenRouterModelRegistry()
-				.refresh()
-				.catch((err) => {
-					console.warn("[Config] Failed to refresh OpenRouter metadata:", err);
-				});
-		}
 		if (telegramKeys.some((key) => key in updates)) {
 			reinitializeAdminUser();
 			await getGateway().reinitializeTelegramChannel();
@@ -294,6 +282,7 @@ export async function handleAIStatus(): Promise<Response> {
 		provider: activeProvider,
 		model: preferences.effectiveModelRef || model,
 		selectedModelRef: preferences.selectedModelRef,
+		selectedProviderId: preferences.selectedProviderId,
 		effectiveModelRef: preferences.effectiveModelRef,
 		thinkingLevel: preferences.thinkingLevel,
 		configured,
@@ -342,17 +331,51 @@ export async function handleChatGptLogin(): Promise<Response> {
 	}
 }
 
-export async function handleOpenRouterModels(): Promise<Response> {
+function mapBuiltinModelsToAiOptions(
+	provider: AiProviderId,
+	models: Array<{
+		id: string;
+		name: string;
+		provider: string;
+		baseUrl?: string;
+		api?: string;
+		contextWindow?: number;
+		maxTokens?: number;
+		reasoning: boolean;
+	}>,
+	selectedModelRef?: string,
+): AiModelOption[] {
+	return models.map((model) => ({
+		ref: `${model.provider}/${model.id}`,
+		provider,
+		modelId: model.id,
+		name: model.name,
+		baseUrl: model.baseUrl,
+		api: model.api,
+		contextWindow: model.contextWindow,
+		maxTokens: model.maxTokens,
+		reasoning: model.reasoning,
+		selected: selectedModelRef === `${model.provider}/${model.id}`,
+	}));
+}
+
+export async function handleAiModels(request: Request): Promise<Response> {
 	try {
-		const registry = getOpenRouterModelRegistry();
-		if (registry.getStatus().count === 0 && getEnvVar("OPENROUTER_API_KEY")) {
-			await registry.refresh();
-		}
-		const models = registry.getAllModels();
+		const provider =
+			new URL(request.url).searchParams.get("provider") === "openai-codex"
+				? "openai-codex"
+				: "openrouter";
+		const selectedModelRef = getAiPreferences().selectedModelRef;
+		const models = mapBuiltinModelsToAiOptions(
+			provider,
+			getBuiltinModels(provider),
+			selectedModelRef,
+		);
 		return createSuccessResponse({
+			provider,
+			configured: getAiProviders()[provider].configured,
 			models,
-			lastRefreshedAt: registry.getStatus().lastRefreshedAt,
-		});
+		} satisfies AiProviderModelsResponse);
 	} catch (err) {
 		return createErrorResponse(
 			err instanceof Error ? err.message : "Failed to load model metadata",

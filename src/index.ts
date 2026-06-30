@@ -33,7 +33,6 @@ const { startLiveRunCoordinator, stopLiveRunCoordinator } = await import(
 	"./live-run.js"
 );
 const { startHeartbeat, stopHeartbeat } = await import("./heartbeat.js");
-const { getOpenRouterModelRegistry } = await import("./openrouter.js");
 const { startServer } = await import("./server.js");
 const { getEnvStatus } = await import("./env.js");
 
@@ -71,19 +70,6 @@ async function startServices() {
 	await startGateway();
 	console.log(" Gateway service started");
 
-	const registry = getOpenRouterModelRegistry();
-	registry.startAutoRefresh();
-	void registry
-		.refresh()
-		.then(() => {
-			console.log(
-				` OpenRouter metadata ready (${registry.getStatus().count} models cached)`,
-			);
-		})
-		.catch((err) => {
-			console.warn(" OpenRouter metadata unavailable:", err);
-		});
-
 	// Start heartbeat scheduler
 	await startHeartbeat();
 	console.log(" Heartbeat scheduler started");
@@ -108,7 +94,6 @@ startServices().catch((err) => {
 // Graceful shutdown
 const shutdown = async () => {
 	console.log("\n Shutting down...");
-	getOpenRouterModelRegistry().stopAutoRefresh();
 	await stopHeartbeat();
 	await stopGateway();
 	await stopLiveRunCoordinator();

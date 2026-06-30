@@ -34,6 +34,11 @@ export type AiProviderInfo = {
 	configured: boolean;
 };
 
+export type AiProviderOption = AiProviderInfo & {
+	modelCount: number;
+	selected: boolean;
+};
+
 export type ResolvedAiModelMetadata = {
 	provider: string;
 	modelId: string;
@@ -59,12 +64,20 @@ export type ThinkingLevelOption = {
 export type AiPreferences = {
 	selectedModelRef?: string;
 	effectiveModelRef?: string;
+	selectedProviderId?: AiProviderId;
 	thinkingLevel: ThinkingLevel;
 	providers: Record<AiProviderId, AiProviderInfo>;
+	providerOptions: AiProviderOption[];
 	models: AiModelOption[];
 	thinkingLevels: ThinkingLevelOption[];
 	chatgptLogin: ChatGptLoginState;
 	configured: boolean;
+};
+
+export type AiProviderModelsResponse = {
+	provider: AiProviderId;
+	configured: boolean;
+	models: AiModelOption[];
 };
 
 export const THINKING_LEVEL_OPTIONS: ThinkingLevelOption[] = [
@@ -206,6 +219,26 @@ export function getSelectedModelRef(): string | undefined {
 	return undefined;
 }
 
+export function getSelectedProviderId(): AiProviderId | undefined {
+	const selectedRef = getSelectedModelRef();
+	if (selectedRef) {
+		const selectedModel = resolveRequestedModel(selectedRef);
+		if (selectedModel) {
+			return selectedModel.provider as AiProviderId;
+		}
+	}
+
+	const effectiveRef = getEffectiveModelRef();
+	if (effectiveRef) {
+		const effectiveModel = resolveRequestedModel(effectiveRef);
+		if (effectiveModel) {
+			return effectiveModel.provider as AiProviderId;
+		}
+	}
+
+	return undefined;
+}
+
 export function getEffectiveModelRef(): string | undefined {
 	const selectedRef = getSelectedModelRef();
 	if (selectedRef) {
@@ -267,12 +300,30 @@ export function getChatGptLoginState(): ChatGptLoginState {
 }
 
 export function getAiPreferences(): AiPreferences {
+	const providers = getAiProviders();
+	const selectedProviderId = getSelectedProviderId();
+	const models = getAvailableAiModels();
 	return {
 		selectedModelRef: getSelectedModelRef(),
 		effectiveModelRef: getEffectiveModelRef(),
+		selectedProviderId,
 		thinkingLevel: getSelectedThinkingLevel(),
-		providers: getAiProviders(),
-		models: getAvailableAiModels(),
+		providers,
+		providerOptions: [
+			{
+				...providers["openai-codex"],
+				modelCount: models.filter((model) => model.provider === "openai-codex")
+					.length,
+				selected: selectedProviderId === "openai-codex",
+			},
+			{
+				...providers.openrouter,
+				modelCount: models.filter((model) => model.provider === "openrouter")
+					.length,
+				selected: selectedProviderId === "openrouter",
+			},
+		],
+		models,
 		thinkingLevels: THINKING_LEVEL_OPTIONS,
 		chatgptLogin: getChatGptLoginState(),
 		configured: hasAnyConfiguredAiProvider(),

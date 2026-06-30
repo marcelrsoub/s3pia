@@ -742,19 +742,10 @@ export function getEnvSchema(): Record<
 		],
 		ai: [
 			{
-				key: "AI_MODEL",
-				label: "AI Model",
-				description:
-					"Optional model override. Leave blank to let S3pia choose from the connected provider.",
-				required: false,
-				isSecret: false,
-				placeholder: "anthropic/claude-sonnet-4 or gpt-5.5",
-			},
-			{
 				key: "OPENROUTER_API_KEY",
 				label: "OpenRouter API Key",
 				description:
-					"Optional. Use this if you want to run on OpenRouter instead of ChatGPT Plus.",
+					"Use this to connect the OpenRouter provider. The model is selected in the UI.",
 				required: false,
 				isSecret: true,
 			},

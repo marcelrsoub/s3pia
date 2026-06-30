@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import { servePublicPage } from "./public-pages.js";
 import {
 	handleAIStatus,
+	handleAiModels,
 	handleAiPreferences,
 	handleChatGptLogin,
 	handleConfigSchema,
@@ -9,7 +10,6 @@ import {
 	handleGetConfig,
 	handleGetEnv,
 	handleHealth,
-	handleOpenRouterModels,
 	handleTelegramBotRestart,
 	handleTelegramBotStatus,
 	handleTelegramLiveRunCancel,
@@ -164,7 +164,7 @@ export function startServer() {
 				return handleChatGptLogin();
 			}
 			if (url.pathname === "/api/ai/models" && req.method === "GET") {
-				return handleOpenRouterModels();
+				return handleAiModels(req);
 			}
 			if (url.pathname === "/api/telegram/status" && req.method === "GET") {
 				return handleTelegramBotStatus();
