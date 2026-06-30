@@ -1,8 +1,3 @@
-import {
-	composeLiveTelegramAck,
-	type TelegramAckContext,
-} from "./telegram-ack.js";
-
 export type TelegramMessageKind = "new_run" | "live_update" | "blocked_answer";
 
 export type TelegramAttachmentKind =
@@ -20,7 +15,10 @@ export interface TelegramActiveRunContext {
 	question?: string;
 }
 
-export interface TelegramReceiptContext extends TelegramAckContext {
+export interface TelegramReceiptContext {
+	content: string;
+	hasFileAttachment: boolean;
+	isBusy: boolean;
 	attachmentKind: TelegramAttachmentKind;
 	preferredLanguage?: string | null;
 	activeRun?: TelegramActiveRunContext | null;
@@ -32,18 +30,7 @@ export interface TelegramReceiptIntake {
 	attachmentKind: TelegramAttachmentKind;
 	understoodGoal: string;
 	nextStep: string;
-	reply: string;
 	missingInfo?: string | null;
-}
-
-export interface TelegramReceiptResult {
-	text: string;
-	intake: TelegramReceiptIntake;
-	usedFallback: boolean;
-}
-
-export interface TelegramReceiptComposerOptions {
-	fallbackAck?: (context: TelegramAckContext) => Promise<string>;
 }
 
 function inferLanguageHeuristic(
@@ -89,7 +76,6 @@ function inferLanguageHeuristic(
 
 function buildFallbackIntake(
 	context: TelegramReceiptContext,
-	fallbackText: string,
 ): TelegramReceiptIntake {
 	const activeRun = context.activeRun;
 	const normalizedContent = context.content.trim().toLowerCase();
@@ -126,34 +112,12 @@ function buildFallbackIntake(
 				? "I’ll use your answer and continue the same run."
 				: "I’ll fold it into the current run."
 			: "I’ll review it and start the run.",
-		reply:
-			activeRun && defaultKind !== "blocked_answer"
-				? "I’ll fold it into the current run."
-				: defaultKind === "blocked_answer"
-					? "I’ll use your answer and continue the same run."
-					: fallbackText,
 		missingInfo: null,
 	};
 }
 
 export function classifyTelegramReceiptIntake(
 	context: TelegramReceiptContext,
-	fallbackText = "Got it.",
 ): TelegramReceiptIntake {
-	return buildFallbackIntake(context, fallbackText);
-}
-
-export async function composeTelegramReceipt(
-	context: TelegramReceiptContext,
-	options: TelegramReceiptComposerOptions = {},
-): Promise<TelegramReceiptResult> {
-	const fallbackAck =
-		options.fallbackAck ?? ((ackContext) => composeLiveTelegramAck(ackContext));
-	const fallbackText = await fallbackAck(context);
-	const intake = buildFallbackIntake(context, fallbackText);
-	return {
-		text: fallbackText,
-		intake,
-		usedFallback: true,
-	};
+	return buildFallbackIntake(context);
 }

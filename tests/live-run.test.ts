@@ -31,16 +31,6 @@ function waitFor(check: () => boolean, timeoutMs = 2_000): Promise<void> {
 	});
 }
 
-function deferred<T>() {
-	let resolve!: (value: T) => void;
-	let reject!: (reason?: unknown) => void;
-	const promise = new Promise<T>((res, rej) => {
-		resolve = res;
-		reject = rej;
-	});
-	return { promise, resolve, reject };
-}
-
 function userMessage(content: string): Message {
 	return {
 		role: "user",
@@ -235,7 +225,7 @@ function createMockSession(): LiveConversationSession & {
 	};
 }
 
-test("suppresses the duplicate final blast when send_message already spoke", async () => {
+test("keeps send_message as the only user-visible reply during a run", async () => {
 	const store = createMockStore([
 		userMessage("Please summarize the attached notes."),
 	]);
@@ -288,7 +278,7 @@ test("suppresses the duplicate final blast when send_message already spoke", asy
 	expect(coordinator.getStatusSnapshot("telegram").currentRun).toBeNull();
 });
 
-test("falls back to the final assistant message on agent_end when turn_end has no text", async () => {
+test("delivers the final assistant reply when send_message was not used", async () => {
 	const store = createMockStore([userMessage("Summarize the task.")]);
 	const session = createMockSession();
 	const deliveries: string[] = [];
@@ -373,50 +363,7 @@ test("surfaces assistant errors when the agent ends without text", async () => {
 	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "idle");
 
 	expect(deliveries).toContain("Error: OpenRouter request failed");
-});
-
-test("delivers the final assistant reply only once when turn_end and agent_end overlap", async () => {
-	const store = createMockStore([userMessage("Summarize the task.")]);
-	const session = createMockSession();
-	const deliveries: string[] = [];
-	const deliveryGate = deferred<boolean>();
-	const coordinator = new LiveRunCoordinator({
-		store,
-		sessionFactory: async () => session,
-		deliverer: async (text) => {
-			deliveries.push(text);
-			return deliveryGate.promise;
-		},
-	});
-
-	coordinator.requestRun({
-		conversationId: "telegram",
-		source: "telegram",
-		kind: "new_run",
-		preview: "Summarize the task.",
-	});
-
-	await waitFor(() => session.sendUserMessageCalls.length === 1);
-	session.emit({ type: "turn_start" });
-	session.emit({
-		type: "turn_end",
-		message: assistantMessage("Final response from turn_end"),
-		toolResults: [],
-	});
-
-	await waitFor(() => deliveries.length === 1);
-	session.emit({
-		type: "agent_end",
-		messages: [assistantMessage("Final response from turn_end")],
-		willRetry: false,
-	});
-
-	await Bun.sleep(50);
-	expect(deliveries).toEqual(["Final response from turn_end"]);
-	deliveryGate.resolve(true);
-
-	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "idle");
-	expect(deliveries).toHaveLength(1);
+	expect(coordinator.getStatusSnapshot("telegram").currentRun).toBeNull();
 });
 
 test("repairs legacy assistant session content before resuming Pi", () => {

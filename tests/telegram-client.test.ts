@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import {
 	normalizeWorkspaceFilePath,
+	prettifyTelegramText,
 	sendTelegramMessageToAdmin,
 } from "../src/telegram-client";
 import { workspacePath } from "../src/workspace";
@@ -88,12 +89,22 @@ test("treats a sent text as delivered even if an attachment upload fails", async
 	}
 });
 
-test("formats headings and bullet lists for Telegram HTML", async () => {
+test("formats markdown into Telegram entities", async () => {
 	const previousToken = process.env.TELEGRAM_BOT_TOKEN;
 	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;
 	const originalFetch = globalThis.fetch;
-	let sentMessage: { chat_id: number; text: string; parse_mode?: string } | null =
-		null;
+	let sentMessage:
+		| {
+				chat_id: number;
+				text: string;
+				entities?: Array<{
+					type: string;
+					offset: number;
+					length: number;
+					url?: string;
+				}>;
+		  }
+		| null = null;
 
 	process.env.TELEGRAM_BOT_TOKEN = "bot-token";
 	process.env.ADMIN_TELEGRAM_ID = "123";
@@ -104,7 +115,12 @@ test("formats headings and bullet lists for Telegram HTML", async () => {
 			sentMessage = JSON.parse(String(init?.body)) as {
 				chat_id: number;
 				text: string;
-				parse_mode?: string;
+				entities?: Array<{
+					type: string;
+					offset: number;
+					length: number;
+					url?: string;
+				}>;
 			};
 			return new Response(JSON.stringify({ ok: true }), {
 				status: 200,
@@ -120,22 +136,23 @@ test("formats headings and bullet lists for Telegram HTML", async () => {
 		);
 
 		expect(result.messageDelivered).toBe(true);
-		if (!sentMessage) {
+		const payload = sentMessage;
+		if (!payload) {
 			throw new Error("Expected a Telegram payload");
 		}
-		const payload = sentMessage as {
-			chat_id: number;
-			text: string;
-			parse_mode?: string;
-		};
-		expect(payload.parse_mode).toBe("HTML");
-		expect(payload.text).toContain("<b>Summary</b>");
-		expect(payload.text).toContain("• first item");
-		expect(payload.text).toContain("• second item");
-		expect(payload.text).toContain("<code>file.txt</code>");
-		expect(payload.text).toContain(
-			'<a href="https://example.com">docs</a>',
+		expect(payload.text).toBe(
+			"Summary\n\n- first item\n- second item\n\nUse file.txt and docs.",
 		);
+		expect(payload.entities).toEqual([
+			{ type: "bold", offset: 0, length: 7 },
+			{ type: "code", offset: 41, length: 8 },
+			{
+				type: "text_link",
+				offset: 54,
+				length: 4,
+				url: "https://example.com",
+			},
+		]);
 	} finally {
 		globalThis.fetch = originalFetch;
 		if (previousToken === undefined) {
@@ -151,131 +168,38 @@ test("formats headings and bullet lists for Telegram HTML", async () => {
 	}
 });
 
-test("renders markdown tables as aligned preformatted blocks", async () => {
-	const previousToken = process.env.TELEGRAM_BOT_TOKEN;
-	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;
-	const originalFetch = globalThis.fetch;
-	let sentMessage: { chat_id: number; text: string; parse_mode?: string } | null =
-		null;
-
-	process.env.TELEGRAM_BOT_TOKEN = "bot-token";
-	process.env.ADMIN_TELEGRAM_ID = "123";
-
-	globalThis.fetch = (async (input, init) => {
-		const url = String(input);
-		if (url.includes("/sendMessage")) {
-			sentMessage = JSON.parse(String(init?.body)) as {
-				chat_id: number;
-				text: string;
-				parse_mode?: string;
-			};
-			return new Response(JSON.stringify({ ok: true }), {
-				status: 200,
-				headers: { "Content-Type": "application/json" },
-			});
-		}
-		throw new Error(`Unexpected fetch: ${url}`);
-	}) as typeof fetch;
-
-	try {
-		const result = await sendTelegramMessageToAdmin(
-			"| Name | Score |\n| --- | --- |\n| Alice | 10 |\n| Bob | 3 |",
-		);
-
-		expect(result.messageDelivered).toBe(true);
-		if (!sentMessage) {
-			throw new Error("Expected a Telegram payload");
-		}
-		const payload = sentMessage as {
-			chat_id: number;
-			text: string;
-			parse_mode?: string;
-		};
-		expect(payload.parse_mode).toBe("HTML");
-		expect(payload.text).toContain(
-			"<pre>| Name  | Score |\n| ----- | ----- |\n| Alice | 10    |\n| Bob   | 3     |\n</pre>",
-		);
-	} finally {
-		globalThis.fetch = originalFetch;
-		if (previousToken === undefined) {
-			delete process.env.TELEGRAM_BOT_TOKEN;
-		} else {
-			process.env.TELEGRAM_BOT_TOKEN = previousToken;
-		}
-		if (previousAdminId === undefined) {
-			delete process.env.ADMIN_TELEGRAM_ID;
-		} else {
-			process.env.ADMIN_TELEGRAM_ID = previousAdminId;
-		}
-	}
+test("prettifies dense plain text into short Telegram lines", () => {
+	expect(
+		prettifyTelegramText(
+			"This is the first update. This is the second update. This is the final update.",
+		),
+	).toBe(
+		"This is the first update.\nThis is the second update.\nThis is the final update.",
+	);
 });
 
-test("renders collapsed inline tables as preformatted blocks", async () => {
-	const previousToken = process.env.TELEGRAM_BOT_TOKEN;
-	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;
-	const originalFetch = globalThis.fetch;
-	let sentMessage: { chat_id: number; text: string; parse_mode?: string } | null =
-		null;
-
-	process.env.TELEGRAM_BOT_TOKEN = "bot-token";
-	process.env.ADMIN_TELEGRAM_ID = "123";
-
-	globalThis.fetch = (async (input, init) => {
-		const url = String(input);
-		if (url.includes("/sendMessage")) {
-			sentMessage = JSON.parse(String(init?.body)) as {
-				chat_id: number;
-				text: string;
-				parse_mode?: string;
-			};
-			return new Response(JSON.stringify({ ok: true }), {
-				status: 200,
-				headers: { "Content-Type": "application/json" },
-			});
-		}
-		throw new Error(`Unexpected fetch: ${url}`);
-	}) as typeof fetch;
-
-	try {
-		const result = await sendTelegramMessageToAdmin(
-			"Done. All four triggers live now: | Trigger | When | Purpose | |---------|------|---------| | Daily Coaching Brief | 10:00 | Push day plan, tasks to Todoist | | Evening Accountability | 20:00 | Mirror — did you do what you said? | | Mid-week Review | Wed 19:00 | Adjust the plan mid-flight | | Weekly Review | Sun 12:00 | Full review, stats, next week's priorities | I'm taking this seriously, Captain. No cheerleading — coaching. If you drift, I'll call it. If you crush it, I'll say so. 🫡🤎",
-		);
-
-		expect(result.messageDelivered).toBe(true);
-		if (!sentMessage) {
-			throw new Error("Expected a Telegram payload");
-		}
-		const payload = sentMessage as {
-			chat_id: number;
-			text: string;
-			parse_mode?: string;
-		};
-		expect(payload.parse_mode).toBe("HTML");
-		expect(payload.text).toContain("Done. All four triggers live now:");
-		expect(payload.text).toContain("<pre>| Trigger");
-		expect(payload.text).toContain("| Weekly Review");
-		expect(payload.text).toContain("I'm taking this seriously, Captain.");
-	} finally {
-		globalThis.fetch = originalFetch;
-		if (previousToken === undefined) {
-			delete process.env.TELEGRAM_BOT_TOKEN;
-		} else {
-			process.env.TELEGRAM_BOT_TOKEN = previousToken;
-		}
-		if (previousAdminId === undefined) {
-			delete process.env.ADMIN_TELEGRAM_ID;
-		} else {
-			process.env.ADMIN_TELEGRAM_ID = previousAdminId;
-		}
-	}
+test("breaks inline numbered lists onto separate Telegram lines", () => {
+	expect(
+		prettifyTelegramText(
+			"Plan: 1. Check logs 2. Restart the service 3. Confirm recovery",
+		),
+	).toBe("Plan:\n1. Check logs\n2. Restart the service\n3. Confirm recovery");
 });
 
-test("escapes model output while preserving Telegram HTML entities", async () => {
+test("splits long messages into plain text chunks", async () => {
 	const previousToken = process.env.TELEGRAM_BOT_TOKEN;
 	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;
 	const originalFetch = globalThis.fetch;
-	let sentMessage: { chat_id: number; text: string; parse_mode?: string } | null =
-		null;
+	const sentMessages: Array<{
+		chat_id: number;
+		text: string;
+		entities?: Array<{
+			type: string;
+			offset: number;
+			length: number;
+			url?: string;
+		}>;
+	}> = [];
 
 	process.env.TELEGRAM_BOT_TOKEN = "bot-token";
 	process.env.ADMIN_TELEGRAM_ID = "123";
@@ -283,11 +207,18 @@ test("escapes model output while preserving Telegram HTML entities", async () =>
 	globalThis.fetch = (async (input, init) => {
 		const url = String(input);
 		if (url.includes("/sendMessage")) {
-			sentMessage = JSON.parse(String(init?.body)) as {
-				chat_id: number;
-				text: string;
-				parse_mode?: string;
-			};
+			sentMessages.push(
+				JSON.parse(String(init?.body)) as {
+					chat_id: number;
+					text: string;
+					entities?: Array<{
+						type: string;
+						offset: number;
+						length: number;
+						url?: string;
+					}>;
+				},
+			);
 			return new Response(JSON.stringify({ ok: true }), {
 				status: 200,
 				headers: { "Content-Type": "application/json" },
@@ -297,27 +228,14 @@ test("escapes model output while preserving Telegram HTML entities", async () =>
 	}) as typeof fetch;
 
 	try {
-		const result = await sendTelegramMessageToAdmin(
-			"**Deploy <now>**\n\n```bash\necho \"a < b && c > d\"\n```\n\nUse [docs](https://example.com?q=a&b=\"c\").",
-		);
+		const result = await sendTelegramMessageToAdmin("a".repeat(3701));
 
 		expect(result.messageDelivered).toBe(true);
-		if (!sentMessage) {
-			throw new Error("Expected a Telegram payload");
-		}
-		const payload = sentMessage as {
-			chat_id: number;
-			text: string;
-			parse_mode?: string;
-		};
-		expect(payload.parse_mode).toBe("HTML");
-		expect(payload.text).toContain("<b>Deploy &lt;now&gt;</b>");
-		expect(payload.text).toContain(
-			'<pre>echo "a &lt; b &amp;&amp; c &gt; d"\n</pre>',
-		);
-		expect(payload.text).toContain(
-			'<a href="https://example.com?q=a&amp;b=&quot;c&quot;">docs</a>',
-		);
+		expect(sentMessages).toHaveLength(2);
+		expect(sentMessages[0]?.entities).toBeUndefined();
+		expect(sentMessages[1]?.entities).toBeUndefined();
+		expect(sentMessages[0]?.text.length).toBe(3600);
+		expect(sentMessages[1]?.text.length).toBe(101);
 	} finally {
 		globalThis.fetch = originalFetch;
 		if (previousToken === undefined) {

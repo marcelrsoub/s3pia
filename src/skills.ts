@@ -44,8 +44,8 @@ class Skills {
 	}
 
 	/**
-	 * Get skills summary for LLM context
-	 * Returns only skill names and filenames (not full content)
+	 * Get skills summary for LLM context.
+	 * Returns only filenames so the prompt stays concise.
 	 */
 	async getSkillsSummary(): Promise<string> {
 		const skills = await this.getAvailableSkills();
@@ -54,7 +54,7 @@ class Skills {
 			return "No skills available.";
 		}
 
-		return skills.map((s) => `- **${s.name}** (${s.filename}.md)`).join("\n");
+		return skills.map((s) => `- \`${s.filename}.md\``).join("\n");
 	}
 
 	/**

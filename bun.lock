@@ -6,6 +6,8 @@
       "name": "s3pia",
       "dependencies": {
         "@earendil-works/pi-coding-agent": "^0.80.2",
+        "@gramio/format": "^0.9.0",
+        "marked": "^18.0.5",
       },
       "devDependencies": {
         "@biomejs/biome": "2.3.13",
@@ -98,6 +100,10 @@
     "@earendil-works/pi-tui": ["@earendil-works/pi-tui@0.80.2", "", { "dependencies": { "get-east-asian-width": "1.6.0", "marked": "18.0.5" } }, "sha512-OvOAMIbXiC9OSse17YMiXIsI9AS5XM/ZV8N/k+UzdlRpPILDQYmLElevgGW92kkXR8qHBClIdzhCjuzlBGvphA=="],
 
     "@google/genai": ["@google/genai@1.52.0", "", { "dependencies": { "google-auth-library": "^10.3.0", "p-retry": "^4.6.2", "protobufjs": "^7.5.4", "ws": "^8.18.0" }, "peerDependencies": { "@modelcontextprotocol/sdk": "^1.25.2" }, "optionalPeers": ["@modelcontextprotocol/sdk"] }, "sha512-gwSvbpiN/17O9TbsqSsE/OzZcpv5Fo4RQjdngGgogtuB9RsyJ8ZHhX5KjHj1bp5N9snN2eK8LDGXSaWW2hof8Q=="],
+
+    "@gramio/format": ["@gramio/format@0.9.0", "", { "dependencies": { "@gramio/types": "^10.1.0" }, "peerDependencies": { "marked": "^15.0.11", "node-html-parser": ">=6.0.0" }, "optionalPeers": ["marked", "node-html-parser"] }, "sha512-dU0DWlUo01wL+yL8Pi/itFfKhxvqn8WXKQ+maYsjTFSgfo3iHF96kAsrmdwszJjYSBioWcWD2DhKJB4S1k9dXA=="],
+
+    "@gramio/types": ["@gramio/types@10.1.0", "", {}, "sha512-vced/i5k2wbkkcOZvD3LJgv7EjPK6oJOL12u0Piag+JDDSXJt/fejPPXXG+st0vYoIQR5bd4ndrWi4Cn5PshFQ=="],
 
     "@mariozechner/clipboard": ["@mariozechner/clipboard@0.3.9", "", { "optionalDependencies": { "@mariozechner/clipboard-darwin-arm64": "0.3.9", "@mariozechner/clipboard-darwin-universal": "0.3.9", "@mariozechner/clipboard-darwin-x64": "0.3.9", "@mariozechner/clipboard-linux-arm64-gnu": "0.3.9", "@mariozechner/clipboard-linux-arm64-musl": "0.3.9", "@mariozechner/clipboard-linux-riscv64-gnu": "0.3.9", "@mariozechner/clipboard-linux-x64-gnu": "0.3.9", "@mariozechner/clipboard-linux-x64-musl": "0.3.9", "@mariozechner/clipboard-win32-arm64-msvc": "0.3.9", "@mariozechner/clipboard-win32-x64-msvc": "0.3.9" } }, "sha512-ABnA53mdfkGZwOFUdZNv2S0CWGO/EIuPj8Vv9xmBFmSYg/qFc7ihO6q5FcQjvoE67kZpWkEc4AhD6B/os04yuA=="],
 

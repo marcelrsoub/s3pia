@@ -12,6 +12,7 @@ dist
 # ====== CODEx SCRATCH ======
 .superpowers/
 docs/superpowers/
+.lavish/
 
 # ====== LOGS ======
 logs
