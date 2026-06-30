@@ -112,6 +112,8 @@ interface LiveRunState {
 	startedAt?: number;
 	updatedAt?: number;
 	rerunRequested: boolean;
+	usedSendMessage: boolean;
+	turnResponseDelivered: boolean;
 	session: LiveConversationSession | null;
 	sessionLoading: Promise<LiveConversationSession> | null;
 	unsubscribe: (() => void) | null;
@@ -254,6 +256,99 @@ function toAssistantTextContent(
 	text: string,
 ): Array<{ type: "text"; text: string }> {
 	return text.trim().length > 0 ? [{ type: "text", text }] : [];
+}
+
+function normalizeAssistantText(text: string): string {
+	return text.trim().replace(/\s+/g, " ");
+}
+
+function extractTextFromMessage(message: unknown): string | undefined {
+	if (!message || typeof message !== "object") {
+		return undefined;
+	}
+
+	const maybeMessage = message as {
+		content?: unknown;
+		text?: unknown;
+	};
+
+	if (typeof maybeMessage.text === "string") {
+		const normalized = normalizeAssistantText(maybeMessage.text);
+		return normalized || undefined;
+	}
+
+	if (typeof maybeMessage.content === "string") {
+		const normalized = normalizeAssistantText(maybeMessage.content);
+		return normalized || undefined;
+	}
+
+	if (Array.isArray(maybeMessage.content)) {
+		const text = maybeMessage.content
+			.map((part) => {
+				if (typeof part === "string") return part;
+				if (part && typeof part === "object" && "text" in part) {
+					const candidate = (part as { text?: unknown }).text;
+					return typeof candidate === "string" ? candidate : "";
+				}
+				return "";
+			})
+			.join(" ");
+		const normalized = normalizeAssistantText(text);
+		return normalized || undefined;
+	}
+
+	return undefined;
+}
+
+function extractAssistantFailureText(message: unknown): string | undefined {
+	const text = extractTextFromMessage(message);
+	if (text) {
+		return text;
+	}
+
+	if (!message || typeof message !== "object") {
+		return undefined;
+	}
+
+	const maybeMessage = message as {
+		errorMessage?: unknown;
+		stopReason?: unknown;
+	};
+	const errorMessage =
+		typeof maybeMessage.errorMessage === "string"
+			? maybeMessage.errorMessage.trim()
+			: "";
+	const stopReason =
+		typeof maybeMessage.stopReason === "string"
+			? maybeMessage.stopReason
+			: undefined;
+
+	if (!errorMessage || stopReason === "aborted") {
+		return undefined;
+	}
+
+	return `Error: ${errorMessage}`;
+}
+
+async function deliverFinalAssistantResponse(
+	conversationId: string,
+	state: LiveRunState,
+	deliverer: TelegramDeliverer,
+	store: LiveRunConversationStore,
+	responseText: string,
+): Promise<boolean> {
+	if (state.turnResponseDelivered) {
+		return false;
+	}
+
+	state.turnResponseDelivered = true;
+
+	const delivered = await deliverer(responseText, []);
+	if (delivered) {
+		store.addMessage(conversationId, "assistant", responseText, "telegram");
+	}
+
+	return delivered;
 }
 
 export function normalizeLegacySessionAssistantContent(
@@ -657,6 +752,8 @@ export class LiveRunCoordinator {
 		state.source = request.source;
 		state.preview = preview;
 		state.updatedAt = now;
+		state.usedSendMessage = false;
+		state.turnResponseDelivered = false;
 
 		void this.routeRequest(conversationId, state, request).catch((err) => {
 			console.error("[LiveRun] Failed to route live request:", err);
@@ -685,6 +782,8 @@ export class LiveRunCoordinator {
 				activeRun?.status === "blocked" ? activeRun.startedAt : undefined,
 			updatedAt: activeRun?.updatedAt || Date.now(),
 			rerunRequested: false,
+			usedSendMessage: false,
+			turnResponseDelivered: false,
 			session: null,
 			sessionLoading: null,
 			unsubscribe: null,
@@ -837,6 +936,8 @@ export class LiveRunCoordinator {
 				const now = Date.now();
 				state.startedAt ??= now;
 				state.updatedAt = now;
+				state.usedSendMessage = false;
+				state.turnResponseDelivered = false;
 				writeActiveRunMetadata(this.store, conversationId, state);
 				break;
 			}
@@ -886,6 +987,18 @@ export class LiveRunCoordinator {
 						}
 					}
 
+					if (pendingTool.toolName === "send_message") {
+						const delivered =
+							result?.delivered ??
+							result?.messageDelivered ??
+							result?.details?.delivered ??
+							result?.details?.messageDelivered ??
+							false;
+						if (delivered) {
+							state.usedSendMessage = true;
+						}
+					}
+
 					if (
 						(pendingTool.toolName === "write" ||
 							pendingTool.toolName === "edit") &&
@@ -917,11 +1030,36 @@ export class LiveRunCoordinator {
 		conversationId: string,
 		state: LiveRunState,
 		session: LiveConversationSession,
-		_event: Extract<AgentSessionEvent, { type: "turn_end" }>,
+		event: Extract<AgentSessionEvent, { type: "turn_end" }>,
 	): Promise<void> {
 		const hasPendingMessages =
 			Boolean(session.pendingMessageCount && session.pendingMessageCount > 0) ||
 			state.rerunRequested;
+		const assistantText =
+			extractTextFromMessage(event.message) || session.getLastAssistantText();
+		const assistantFailureText = extractAssistantFailureText(event.message);
+		if (
+			state.status !== "blocked" &&
+			!state.usedSendMessage &&
+			!hasPendingMessages &&
+			(assistantText || assistantFailureText)
+		) {
+			const responseText = assistantText || assistantFailureText || "";
+			if (assistantFailureText && !assistantText) {
+				console.warn(
+					`[LiveRun] Assistant turn ended with error: ${assistantFailureText}`,
+				);
+			}
+			await deliverFinalAssistantResponse(
+				conversationId,
+				state,
+				this.deliverer,
+				this.store,
+				responseText,
+			);
+		}
+
+		state.usedSendMessage = false;
 		state.updatedAt = Date.now();
 
 		if (state.status !== "blocked" && !hasPendingMessages) {
@@ -938,11 +1076,42 @@ export class LiveRunCoordinator {
 		conversationId: string,
 		state: LiveRunState,
 		session: LiveConversationSession,
-		_event: Extract<AgentSessionEvent, { type: "agent_end" }>,
+		event: Extract<AgentSessionEvent, { type: "agent_end" }>,
 	): Promise<void> {
 		const hasPendingMessages =
 			Boolean(session.pendingMessageCount && session.pendingMessageCount > 0) ||
 			state.rerunRequested;
+		if (
+			state.status !== "blocked" &&
+			!state.usedSendMessage &&
+			!state.turnResponseDelivered &&
+			!hasPendingMessages
+		) {
+			const lastAssistant = [...event.messages]
+				.reverse()
+				.find((message) => message.role === "assistant");
+			const assistantText =
+				extractTextFromMessage(lastAssistant) || session.getLastAssistantText();
+			const assistantFailureText = extractAssistantFailureText(lastAssistant);
+
+			if (assistantText || assistantFailureText) {
+				const responseText = assistantText || assistantFailureText || "";
+				if (assistantFailureText && !assistantText) {
+					console.warn(
+						`[LiveRun] Agent ended with error: ${assistantFailureText}`,
+					);
+				}
+				await deliverFinalAssistantResponse(
+					conversationId,
+					state,
+					this.deliverer,
+					this.store,
+					responseText,
+				);
+			}
+		}
+
+		state.usedSendMessage = false;
 		state.updatedAt = Date.now();
 
 		if (state.status !== "blocked" && !hasPendingMessages) {

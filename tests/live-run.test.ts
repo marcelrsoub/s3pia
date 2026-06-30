@@ -278,7 +278,7 @@ test("keeps send_message as the only user-visible reply during a run", async () 
 	expect(coordinator.getStatusSnapshot("telegram").currentRun).toBeNull();
 });
 
-test("does not auto-deliver a final assistant reply without send_message", async () => {
+test("delivers the final assistant reply when send_message was not used", async () => {
 	const store = createMockStore([userMessage("Summarize the task.")]);
 	const session = createMockSession();
 	const deliveries: string[] = [];
@@ -313,11 +313,11 @@ test("does not auto-deliver a final assistant reply without send_message", async
 
 	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "idle");
 
-	expect(deliveries).toHaveLength(0);
+	expect(deliveries).toEqual(["Fallback response from agent_end"]);
 	expect(coordinator.getStatusSnapshot("telegram").currentRun).toBeNull();
 });
 
-test("does not auto-deliver assistant errors without send_message", async () => {
+test("surfaces assistant errors when the agent ends without text", async () => {
 	const store = createMockStore([userMessage("Do the thing.")]);
 	const session = createMockSession();
 	const deliveries: string[] = [];
@@ -362,7 +362,7 @@ test("does not auto-deliver assistant errors without send_message", async () => 
 
 	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "idle");
 
-	expect(deliveries).toHaveLength(0);
+	expect(deliveries).toContain("Error: OpenRouter request failed");
 	expect(coordinator.getStatusSnapshot("telegram").currentRun).toBeNull();
 });
 
@@ -559,7 +559,7 @@ test("resumes a blocked run in the same conversation after an answer arrives", a
 
 	await waitFor(() => coordinator.getStatusSnapshot("telegram").status === "idle");
 
-	expect(deliveries).toHaveLength(0);
+	expect(deliveries).toContain("updated file-b.txt");
 	expect(coordinator.getStatusSnapshot("telegram").currentRun).toBeNull();
 });
 
