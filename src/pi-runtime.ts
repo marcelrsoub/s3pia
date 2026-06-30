@@ -512,6 +512,8 @@ function createPiCustomTools(
 			promptGuidelines: [
 				"You can use send_message multiple times during the same run.",
 				"Include workspace file paths in files when the user should see an image, screenshot, chart, or file.",
+				"Use simple markdown for bold, inline code, links, and bullets when it helps readability.",
+				"Avoid tables; Telegram formatting is strongest with short, simple messages.",
 				"Keep the message concise and mobile-friendly.",
 			],
 			parameters: Type.Object({
