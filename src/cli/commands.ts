@@ -7,6 +7,7 @@
  * Inspired by nanobot: https://github.com/HKUDS/nanobot
  */
 
+import { getAiProviders, getResolvedAiModelMetadata } from "../ai.js";
 import {
 	getAllEnvVarsWithMetadata,
 	getEnvStatus,
@@ -15,7 +16,6 @@ import {
 	validateEnv,
 } from "../env.js";
 import { getGateway } from "../gateway/manager.js";
-import { getActiveModelMetadata } from "../openrouter.js";
 
 /**
  * Status command - show system status
@@ -33,18 +33,33 @@ export async function statusCommand(): Promise<void> {
 	console.log("");
 
 	// AI status
-	const aiModel = getEnvVar("AI_MODEL") || "unknown";
+	const aiModel = getEnvVar("AI_MODEL") || "(auto)";
+	const providers = getAiProviders();
+	const metadata = getResolvedAiModelMetadata(
+		getEnvVar("AI_MODEL") || undefined,
+	);
+	const activeProvider = metadata?.provider
+		? metadata.provider
+		: providers["openai-codex"].configured
+			? "openai-codex"
+			: providers.openrouter.configured
+				? "openrouter"
+				: "unconfigured";
 	console.log("AI Backend:");
-	console.log("  Provider: openrouter");
+	console.log(`  Provider: ${activeProvider}`);
 	console.log(`  Model: ${aiModel}`);
-	console.log("  Base URL: https://openrouter.ai/api/v1");
-	const metadata = await getActiveModelMetadata();
+	console.log(
+		`  OpenRouter: ${providers.openrouter.configured ? "connected" : "not connected"}`,
+	);
+	console.log(
+		`  ChatGPT Plus: ${providers["openai-codex"].configured ? "connected" : "not connected"}`,
+	);
 	if (metadata) {
 		console.log(
-			`  Context: ${Math.min(metadata.contextLength, metadata.providerContextLength).toLocaleString()} tokens`,
+			`  Context: ${metadata.contextWindow?.toLocaleString() || "unknown"} tokens`,
 		);
 		console.log(
-			`  Max completion: ${metadata.maxCompletionTokens.toLocaleString()} tokens`,
+			`  Max completion: ${metadata.maxTokens?.toLocaleString() || "unknown"} tokens`,
 		);
 	}
 	console.log("");

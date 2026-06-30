@@ -2,6 +2,8 @@ import { basename } from "node:path";
 import { servePublicPage } from "./public-pages.js";
 import {
 	handleAIStatus,
+	handleAiPreferences,
+	handleChatGptLogin,
 	handleConfigSchema,
 	handleConfigStatus,
 	handleGetConfig,
@@ -151,6 +153,15 @@ export function startServer() {
 			}
 			if (url.pathname === "/api/ai/status" && req.method === "GET") {
 				return handleAIStatus();
+			}
+			if (
+				url.pathname === "/api/ai/preferences" &&
+				(req.method === "GET" || req.method === "POST")
+			) {
+				return handleAiPreferences(req);
+			}
+			if (url.pathname === "/api/ai/login/chatgpt" && req.method === "POST") {
+				return handleChatGptLogin();
 			}
 			if (url.pathname === "/api/ai/models" && req.method === "GET") {
 				return handleOpenRouterModels();

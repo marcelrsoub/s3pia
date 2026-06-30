@@ -4,6 +4,15 @@
  * Configuration, status, and Telegram management only.
  */
 
+import {
+	getAiPreferences,
+	getAiProviders,
+	getChatGptLoginState,
+	getResolvedAiModelMetadata,
+	startChatGptLogin,
+	type ThinkingLevel,
+	updateAiPreferences,
+} from "./ai.js";
 import { TELEGRAM_CONVERSATION_ID } from "./conversation.js";
 import {
 	getAllEnvVarsWithMetadata,
@@ -18,10 +27,7 @@ import {
 } from "./env.js";
 import { getGateway } from "./gateway/manager.js";
 import { getLiveRunCoordinator } from "./live-run.js";
-import {
-	getActiveModelMetadata,
-	getOpenRouterModelRegistry,
-} from "./openrouter.js";
+import { getOpenRouterModelRegistry } from "./openrouter.js";
 import { reinitializeAdminUser } from "./telegram-auth.js";
 import { workspacePath } from "./workspace.js";
 
@@ -266,25 +272,74 @@ export async function handleHealth(): Promise<Response> {
 }
 
 export async function handleAIStatus(): Promise<Response> {
-	const model = getEnvVar("AI_MODEL") || "";
-	const hasKey = !!getEnvVar("OPENROUTER_API_KEY");
-	const metadata = hasKey && model ? await getActiveModelMetadata() : null;
+	const preferences = getAiPreferences();
+	const providers = preferences.providers;
+	const model = preferences.selectedModelRef || "";
+	const metadata = getResolvedAiModelMetadata(
+		preferences.selectedModelRef || preferences.effectiveModelRef,
+	);
+	const configured =
+		providers.openrouter.configured || providers["openai-codex"].configured;
+	const activeProvider = configured
+		? metadata?.provider ||
+			(providers["openai-codex"].configured ? "openai-codex" : "openrouter")
+		: undefined;
 
 	let errorMessage: string | undefined;
-	if (!hasKey && model) {
-		errorMessage = "No OpenRouter API key configured";
-	} else if (!model && hasKey) {
-		errorMessage = "No model configured";
+	if (!configured) {
+		errorMessage = "Connect OpenRouter or ChatGPT Plus to start the agent";
 	}
 
 	return createSuccessResponse({
-		provider: "openrouter",
-		model,
-		configured: hasKey && !!model,
-		hasAuthError: !hasKey && !!model,
+		provider: activeProvider,
+		model: preferences.effectiveModelRef || model,
+		selectedModelRef: preferences.selectedModelRef,
+		effectiveModelRef: preferences.effectiveModelRef,
+		thinkingLevel: preferences.thinkingLevel,
+		configured,
+		hasAuthError: !configured,
 		errorMessage,
 		metadata,
+		providers,
+		chatgptLogin: getChatGptLoginState(),
 	});
+}
+
+export async function handleAiPreferences(request: Request): Promise<Response> {
+	if (request.method === "GET") {
+		return createSuccessResponse(getAiPreferences());
+	}
+
+	try {
+		const input = (await request.json()) as {
+			modelRef?: string | null;
+			thinkingLevel?: string | null;
+		};
+		const preferences = await updateAiPreferences({
+			modelRef: input.modelRef,
+			thinkingLevel: input.thinkingLevel as ThinkingLevel | null | undefined,
+		});
+		return createSuccessResponse(preferences);
+	} catch (err) {
+		return createErrorResponse(
+			err instanceof Error ? err.message : "Failed to update AI preferences",
+		);
+	}
+}
+
+export async function handleChatGptLogin(): Promise<Response> {
+	try {
+		const state = await startChatGptLogin();
+		return createSuccessResponse({
+			provider: "openai-codex",
+			state,
+			configured: getAiProviders()["openai-codex"].configured,
+		});
+	} catch (err) {
+		return createErrorResponse(
+			err instanceof Error ? err.message : "Failed to start ChatGPT login",
+		);
+	}
 }
 
 export async function handleOpenRouterModels(): Promise<Response> {

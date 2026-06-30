@@ -35,6 +35,7 @@ const { startLiveRunCoordinator, stopLiveRunCoordinator } = await import(
 const { startHeartbeat, stopHeartbeat } = await import("./heartbeat.js");
 const { getOpenRouterModelRegistry } = await import("./openrouter.js");
 const { startServer } = await import("./server.js");
+const { getEnvStatus } = await import("./env.js");
 
 // Initialize subsystems
 console.log("Starting SepiaBot...");
@@ -51,14 +52,12 @@ import { logger } from "./logging.js";
 console.log(" Logging system ready");
 console.log(" Environment variables loaded");
 
-// Check required env vars
-const requiredEnvVars = ["OPENROUTER_API_KEY", "AI_MODEL"];
-const missingVars = requiredEnvVars.filter((key) => !process.env[key]);
-
-if (missingVars.length > 0) {
+// Check whether an AI provider is connected
+const envStatus = getEnvStatus();
+if (!envStatus.configured) {
 	console.log("\n SETUP REQUIRED");
-	console.log(`   Missing: ${missingVars.join(", ")}`);
-	console.log(`   Add to /app/ws/config/.env and restart`);
+	console.log(`   Missing: ${envStatus.missingRequired.join(", ")}`);
+	console.log(`   Connect OpenRouter or sign in with ChatGPT Plus`);
 } else {
 	console.log(" Configuration loaded");
 }

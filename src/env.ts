@@ -5,6 +5,7 @@
  * Hot-reloads into process.env on every write.
  */
 
+import { hasAnyConfiguredAiProvider } from "./ai.js";
 import { workspacePath } from "./workspace.js";
 
 const CONFIG_DIR = workspacePath("config");
@@ -639,12 +640,10 @@ export async function getEnvFileContent(): Promise<string> {
 
 /**
  * Check if required environment variables are configured
- * Required: OPENROUTER_API_KEY, AI_MODEL
+ * Required: any supported AI provider connection
  */
 export function isEnvConfigured(): boolean {
-	const openrouterKey = process.env.OPENROUTER_API_KEY;
-	const model = process.env.AI_MODEL;
-	return !!openrouterKey && !!model;
+	return hasAnyConfiguredAiProvider();
 }
 
 /**
@@ -656,12 +655,13 @@ export function getEnvStatus(): {
 	missingRequired: string[];
 	canStart: boolean;
 } {
-	const openrouterKey = process.env.OPENROUTER_API_KEY;
-	const model = process.env.AI_MODEL;
 	const missingRequired: string[] = [];
+	const openrouterKey = process.env.OPENROUTER_API_KEY?.trim();
+	const chatGptConfigured = hasAnyConfiguredAiProvider();
 
-	if (!openrouterKey) missingRequired.push("OPENROUTER_API_KEY");
-	if (!model) missingRequired.push("AI_MODEL");
+	if (!openrouterKey && !chatGptConfigured) {
+		missingRequired.push("OpenRouter API key or ChatGPT Plus login");
+	}
 
 	return {
 		configured: missingRequired.length === 0,
@@ -745,16 +745,17 @@ export function getEnvSchema(): Record<
 				key: "AI_MODEL",
 				label: "AI Model",
 				description:
-					"OpenRouter model identifier, e.g. anthropic/claude-sonnet-4",
-				required: true,
+					"Optional model override. Leave blank to let S3pia choose from the connected provider.",
+				required: false,
 				isSecret: false,
-				placeholder: "anthropic/claude-sonnet-4",
+				placeholder: "anthropic/claude-sonnet-4 or gpt-5.5",
 			},
 			{
 				key: "OPENROUTER_API_KEY",
 				label: "OpenRouter API Key",
-				description: "Your OpenRouter API key",
-				required: true,
+				description:
+					"Optional. Use this if you want to run on OpenRouter instead of ChatGPT Plus.",
+				required: false,
 				isSecret: true,
 			},
 			{

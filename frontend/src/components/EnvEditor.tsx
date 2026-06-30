@@ -7,6 +7,7 @@ import {
 	AccordionItem,
 	AccordionTrigger,
 } from "./ui/accordion";
+import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import {
 	Card,
@@ -60,11 +61,69 @@ type EnvEditorProps = {
 	inline?: boolean;
 };
 
-type OpenRouterModelSuggestion = {
-	id: string;
+type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+type AiModelOption = {
+	ref: string;
+	provider: string;
+	modelId: string;
 	name: string;
-	contextLength: number;
-	maxCompletionTokens: number;
+	baseUrl?: string;
+	api?: string;
+	contextWindow?: number;
+	maxTokens?: number;
+	reasoning: boolean;
+	selected: boolean;
+};
+
+type ThinkingLevelOption = {
+	value: ThinkingLevel;
+	label: string;
+	description: string;
+};
+
+type AiPreferences = {
+	selectedModelRef?: string;
+	effectiveModelRef?: string;
+	thinkingLevel: ThinkingLevel;
+	models: AiModelOption[];
+	thinkingLevels: ThinkingLevelOption[];
+};
+
+type ChatGptLoginState = {
+	status:
+		| "idle"
+		| "starting"
+		| "awaiting_verification"
+		| "authenticated"
+		| "error";
+	userCode?: string;
+	verificationUri?: string;
+	error?: string;
+};
+
+type AiStatus = {
+	configured: boolean;
+	provider?: string;
+	model?: string;
+	selectedModelRef?: string;
+	effectiveModelRef?: string;
+	thinkingLevel?: ThinkingLevel;
+	errorMessage?: string;
+	metadata?: {
+		provider: string;
+		modelId: string;
+		name: string;
+		baseUrl?: string;
+		api?: string;
+		contextWindow?: number;
+		maxTokens?: number;
+	} | null;
+	providers?: {
+		openrouter?: { configured: boolean };
+		"openai-codex"?: { configured: boolean };
+	};
+	chatgptLogin?: ChatGptLoginState;
 };
 
 export function EnvEditor({
@@ -79,7 +138,19 @@ export function EnvEditor({
 		success?: boolean;
 		message?: string;
 	} | null>(null);
-	const [models, setModels] = useState<OpenRouterModelSuggestion[]>([]);
+	const [aiPreferences, setAiPreferences] = useState<AiPreferences | null>(
+		null,
+	);
+	const [selectedModelRef, setSelectedModelRef] = useState("");
+	const [selectedThinkingLevel, setSelectedThinkingLevel] =
+		useState<ThinkingLevel>("medium");
+	const [isSavingAiPreferences, setIsSavingAiPreferences] = useState(false);
+	const [aiPreferencesMessage, setAiPreferencesMessage] = useState<
+		string | null
+	>(null);
+	const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
+	const [isConnectingChatGpt, setIsConnectingChatGpt] = useState(false);
+	const [chatGptMessage, setChatGptMessage] = useState<string | null>(null);
 
 	// Load current .env file when dialog opens
 	useEffect(() => {
@@ -114,21 +185,159 @@ export function EnvEditor({
 	useEffect(() => {
 		if (!inline && !open) return;
 
-		const loadModels = async () => {
+		const loadAiPreferences = async () => {
 			try {
-				const response = await fetch("/api/ai/models");
+				const response = await fetch("/api/ai/preferences");
 				if (!response.ok) return;
-				const payload = (await response.json()) as {
-					models?: OpenRouterModelSuggestion[];
-				};
-				setModels(payload.models?.slice(0, 12) ?? []);
+				const payload = (await response.json()) as AiPreferences;
+				setAiPreferences(payload);
+				setSelectedModelRef(payload.selectedModelRef ?? "");
+				setSelectedThinkingLevel(payload.thinkingLevel ?? "medium");
 			} catch {
 				// Non-fatal for the editor
 			}
 		};
 
-		loadModels();
+		loadAiPreferences();
 	}, [inline, open]);
+
+	useEffect(() => {
+		if (!inline && !open) return;
+
+		const loadAiStatus = async () => {
+			try {
+				const response = await fetch("/api/ai/status");
+				if (!response.ok) return;
+				const payload = (await response.json()) as AiStatus;
+				setAiStatus(payload);
+			} catch {
+				// Non-fatal for the editor
+			}
+		};
+
+		loadAiStatus();
+	}, [inline, open]);
+
+	useEffect(() => {
+		if (!inline && !open) return;
+		const loginState = aiStatus?.chatgptLogin?.status;
+		if (loginState !== "starting" && loginState !== "awaiting_verification") {
+			return;
+		}
+
+		const timer = setInterval(() => {
+			fetch("/api/ai/status")
+				.then((response) => (response.ok ? response.json() : null))
+				.then((payload: AiStatus | null) => {
+					if (payload) {
+						setAiStatus(payload);
+					}
+				})
+				.catch(() => undefined);
+		}, 3000);
+
+		return () => clearInterval(timer);
+	}, [aiStatus?.chatgptLogin?.status, inline, open]);
+
+	const handleConnectChatGpt = async () => {
+		setIsConnectingChatGpt(true);
+		setChatGptMessage(null);
+
+		try {
+			const response = await fetch("/api/ai/login/chatgpt", {
+				method: "POST",
+			});
+			const payload = (await response.json().catch(() => null)) as {
+				state?: ChatGptLoginState;
+				error?: string;
+			} | null;
+
+			if (!response.ok) {
+				throw new Error(payload?.error || "Failed to start ChatGPT login");
+			}
+
+			if (payload?.state?.status === "awaiting_verification") {
+				setAiStatus((prev) =>
+					prev
+						? {
+								...prev,
+								chatgptLogin: payload.state,
+							}
+						: prev,
+				);
+				setChatGptMessage(
+					`Open ${payload.state.verificationUri} and enter code ${payload.state.userCode}`,
+				);
+				return;
+			}
+
+			await fetch("/api/ai/status")
+				.then((response) => (response.ok ? response.json() : null))
+				.then((payloadStatus: AiStatus | null) => {
+					if (payloadStatus) {
+						setAiStatus(payloadStatus);
+					}
+				});
+		} catch (err) {
+			setChatGptMessage(
+				err instanceof Error ? err.message : "Failed to start ChatGPT login",
+			);
+		} finally {
+			setIsConnectingChatGpt(false);
+		}
+	};
+
+	const handleSaveAiPreferences = async () => {
+		setIsSavingAiPreferences(true);
+		setAiPreferencesMessage(null);
+
+		try {
+			const response = await fetch("/api/ai/preferences", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					modelRef: selectedModelRef || null,
+					thinkingLevel: selectedThinkingLevel,
+				}),
+			});
+
+			const payload = (await response.json().catch(() => null)) as
+				| AiPreferences
+				| { error?: string }
+				| null;
+
+			if (!response.ok) {
+				throw new Error(
+					(payload && "error" in payload && payload.error) ||
+						"Failed to save AI preferences",
+				);
+			}
+
+			if (payload && "models" in payload) {
+				setAiPreferences(payload);
+				setSelectedModelRef(payload.selectedModelRef ?? "");
+				setSelectedThinkingLevel(payload.thinkingLevel ?? "medium");
+			}
+
+			await fetch("/api/ai/status")
+				.then((statusResponse) =>
+					statusResponse.ok ? statusResponse.json() : null,
+				)
+				.then((payloadStatus: AiStatus | null) => {
+					if (payloadStatus) {
+						setAiStatus(payloadStatus);
+					}
+				});
+
+			setAiPreferencesMessage("AI preferences saved.");
+		} catch (err) {
+			setAiPreferencesMessage(
+				err instanceof Error ? err.message : "Failed to save AI preferences",
+			);
+		} finally {
+			setIsSavingAiPreferences(false);
+		}
+	};
 
 	const handleSave = async () => {
 		setIsLoading(true);
@@ -163,8 +372,195 @@ export function EnvEditor({
 		}
 	};
 
+	const thinkingLevelOptions = aiPreferences?.thinkingLevels ?? [
+		{
+			value: "off" as const,
+			label: "Off",
+			description: "Minimize reasoning output and keep responses direct.",
+		},
+		{
+			value: "minimal" as const,
+			label: "Minimal",
+			description: "Use the lightest reasoning mode available.",
+		},
+		{
+			value: "low" as const,
+			label: "Low",
+			description: "Favor shorter internal reasoning.",
+		},
+		{
+			value: "medium" as const,
+			label: "Medium",
+			description: "Balanced reasoning depth for most tasks.",
+		},
+		{
+			value: "high" as const,
+			label: "High",
+			description: "Spend more effort on harder tasks.",
+		},
+		{
+			value: "xhigh" as const,
+			label: "Max",
+			description: "Use the strongest reasoning level the model supports.",
+		},
+	];
+	const modelOptions = aiPreferences?.models ?? [];
+	const activeModelLabel =
+		aiStatus?.metadata?.name ||
+		aiStatus?.effectiveModelRef ||
+		aiStatus?.selectedModelRef ||
+		"Auto";
+
 	const editorArea = (
 		<div className="space-y-4">
+			<div className="rounded-lg border bg-muted/20 px-4 py-3 space-y-3">
+				<div className="flex flex-wrap items-start justify-between gap-3">
+					<div className="space-y-1">
+						<div className="text-sm font-medium">AI Providers</div>
+						<p className="text-xs text-muted-foreground">
+							Use OpenRouter or connect ChatGPT Plus here. The agent will pick
+							whichever provider is authenticated.
+						</p>
+					</div>
+					<div className="flex flex-wrap gap-2">
+						<Badge variant="outline">
+							OpenRouter{" "}
+							{aiStatus?.providers?.openrouter?.configured
+								? "connected"
+								: "off"}
+						</Badge>
+						<Badge variant="outline">
+							ChatGPT{" "}
+							{aiStatus?.providers?.["openai-codex"]?.configured
+								? "connected"
+								: "off"}
+						</Badge>
+					</div>
+				</div>
+
+				<div className="flex flex-wrap items-center gap-3">
+					<Button
+						onClick={handleConnectChatGpt}
+						disabled={
+							isConnectingChatGpt ||
+							!!aiStatus?.providers?.["openai-codex"]?.configured
+						}
+					>
+						{isConnectingChatGpt
+							? "Connecting..."
+							: aiStatus?.providers?.["openai-codex"]?.configured
+								? "ChatGPT Connected"
+								: "Connect ChatGPT Plus"}
+					</Button>
+					{aiStatus?.provider && (
+						<Badge variant="secondary">Active: {aiStatus.provider}</Badge>
+					)}
+					<Badge variant="outline">Model: {activeModelLabel}</Badge>
+					{aiStatus?.thinkingLevel && (
+						<Badge variant="outline">Reasoning: {aiStatus.thinkingLevel}</Badge>
+					)}
+				</div>
+
+				{aiStatus?.chatgptLogin?.status === "awaiting_verification" && (
+					<div className="rounded-md border bg-background px-3 py-2 text-sm space-y-1">
+						<div className="text-muted-foreground">
+							Finish the ChatGPT sign-in in your browser:
+						</div>
+						<a
+							href={aiStatus.chatgptLogin.verificationUri}
+							target="_blank"
+							rel="noreferrer"
+							className="font-medium underline underline-offset-4"
+						>
+							{aiStatus.chatgptLogin.verificationUri}
+						</a>
+						<div className="font-mono text-base">
+							{aiStatus.chatgptLogin.userCode}
+						</div>
+					</div>
+				)}
+
+				{chatGptMessage && (
+					<div className="rounded-md border bg-background px-3 py-2 text-sm">
+						{chatGptMessage}
+					</div>
+				)}
+
+				<div className="grid gap-4 md:grid-cols-2">
+					<div className="space-y-2">
+						<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+							Model
+						</div>
+						<select
+							className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+							value={selectedModelRef}
+							onChange={(event) => setSelectedModelRef(event.target.value)}
+						>
+							<option value="">Auto</option>
+							{modelOptions.map((model) => (
+								<option key={model.ref} value={model.ref}>
+									{model.name} ({model.ref})
+								</option>
+							))}
+						</select>
+						<p className="text-xs text-muted-foreground">
+							{selectedModelRef
+								? "This override is stored in the workspace and used for new sessions."
+								: "Auto lets S3pia pick the first authenticated model for the active provider."}
+						</p>
+					</div>
+
+					<div className="space-y-2">
+						<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+							Reasoning
+						</div>
+						<select
+							className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+							value={selectedThinkingLevel}
+							onChange={(event) =>
+								setSelectedThinkingLevel(event.target.value as ThinkingLevel)
+							}
+						>
+							{thinkingLevelOptions.map((level) => (
+								<option key={level.value} value={level.value}>
+									{level.label}
+								</option>
+							))}
+						</select>
+						<p className="text-xs text-muted-foreground">
+							{thinkingLevelOptions.find(
+								(level) => level.value === selectedThinkingLevel,
+							)?.description || "Balanced reasoning depth for most tasks."}
+						</p>
+					</div>
+				</div>
+
+				<div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-background px-3 py-2">
+					<div className="text-xs text-muted-foreground">
+						Model and reasoning changes persist to the workspace and apply to
+						new agent runs.
+					</div>
+					<Button
+						onClick={handleSaveAiPreferences}
+						disabled={isSavingAiPreferences}
+					>
+						{isSavingAiPreferences ? "Saving..." : "Save AI Settings"}
+					</Button>
+				</div>
+
+				{aiPreferencesMessage && (
+					<div className="rounded-md border bg-background px-3 py-2 text-sm">
+						{aiPreferencesMessage}
+					</div>
+				)}
+
+				{aiStatus?.errorMessage && (
+					<div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+						{aiStatus.errorMessage}
+					</div>
+				)}
+			</div>
+
 			{saveResult && (
 				<div
 					className={`rounded-lg p-4 flex items-center gap-2 ${
@@ -211,36 +607,14 @@ export function EnvEditor({
 									Telegram messages
 								</li>
 								<li>
-									Required AI settings are{" "}
-									<code className="text-xs">OPENROUTER_API_KEY</code> and{" "}
-									<code className="text-xs">AI_MODEL</code>
+									AI can run on OpenRouter or ChatGPT Plus. The model field is
+									an optional override rather than a hard requirement.
 								</li>
 							</ul>
 						</div>
 					</AccordionContent>
 				</AccordionItem>
 			</Accordion>
-
-			{models.length > 0 && (
-				<div className="rounded-lg border bg-muted/20 px-4 py-3 space-y-2">
-					<div className="text-sm font-medium">Suggested OpenRouter Models</div>
-					<div className="grid gap-2 sm:grid-cols-2">
-						{models.map((model) => (
-							<div
-								key={model.id}
-								className="rounded-md border bg-background px-3 py-2 text-xs"
-							>
-								<div className="font-medium">{model.id}</div>
-								<div className="text-muted-foreground">{model.name}</div>
-								<div className="text-muted-foreground">
-									Context {model.contextLength.toLocaleString()} • Max output{" "}
-									{model.maxCompletionTokens.toLocaleString()}
-								</div>
-							</div>
-						))}
-					</div>
-				</div>
-			)}
 
 			<div className="relative border rounded-md bg-[#1e1e1e] overflow-auto">
 				<Editor

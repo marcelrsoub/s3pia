@@ -1,6 +1,5 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
-import { getModel as getBuiltinModel } from "@earendil-works/pi-ai/compat";
 import {
 	type AgentSessionEvent,
 	createAgentSession,
@@ -10,6 +9,11 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import {
+	getAiAuthStorage,
+	getAiModelRegistry,
+	resolveRequestedModel,
+} from "./ai.js";
 import {
 	type ConversationMetadata,
 	conversationStore,
@@ -261,7 +265,9 @@ function isWorkspaceContextFile(path: string): boolean {
 
 function isWorkspaceSkillFile(path: string): boolean {
 	const normalized = path.replace(/\\/g, "/");
-	return normalized === "/app/ws/skills" || normalized.startsWith("/app/ws/skills/");
+	return (
+		normalized === "/app/ws/skills" || normalized.startsWith("/app/ws/skills/")
+	);
 }
 
 function shouldClearWorkspaceCacheFromToolResult(event: {
@@ -1165,12 +1171,7 @@ export class LiveRunCoordinator {
 	}): Promise<LiveConversationSession> {
 		const settingsManager = SettingsManager.create(PI_WORKSPACE, PI_AGENT_DIR);
 		const modelSelection = resolveDefaultModelSelection();
-		const selectedModel = modelSelection
-			? getBuiltinModel(
-					"openrouter",
-					modelSelection.modelId as Parameters<typeof getBuiltinModel>[1],
-				)
-			: undefined;
+		const selectedModel = resolveRequestedModel(modelSelection?.modelId);
 		if (selectedModel) {
 			settingsManager.applyOverrides({
 				defaultProvider: selectedModel.provider,
@@ -1178,12 +1179,8 @@ export class LiveRunCoordinator {
 			});
 		} else if (modelSelection) {
 			console.warn(
-				`[LiveRun] Unknown OpenRouter model in AI_MODEL: ${modelSelection.modelId}`,
+				`[LiveRun] Unknown or unavailable AI_MODEL: ${modelSelection.modelId}`,
 			);
-			settingsManager.applyOverrides({
-				defaultProvider: "openrouter",
-				defaultModel: modelSelection.modelId,
-			});
 		}
 
 		const resourceLoader = new DefaultResourceLoader({
@@ -1209,6 +1206,8 @@ export class LiveRunCoordinator {
 		const { session } = await createAgentSession({
 			cwd: PI_WORKSPACE,
 			agentDir: PI_AGENT_DIR,
+			authStorage: getAiAuthStorage(),
+			modelRegistry: getAiModelRegistry(),
 			settingsManager,
 			sessionManager,
 			resourceLoader,
