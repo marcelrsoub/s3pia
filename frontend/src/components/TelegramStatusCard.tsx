@@ -5,7 +5,6 @@ import {
 	RefreshCw,
 } from "lucide-react";
 import { ConnectionStatusIndicator } from "./ConnectionStatus";
-import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import {
 	Card,
@@ -87,24 +86,6 @@ export function TelegramStatusCard({
 				: "disconnected";
 
 	const errorText = status?.errorMessage || status?.error;
-	const enabledLabel = status
-		? status.enabled === false
-			? "Disabled"
-			: status.enabled
-				? "Enabled"
-				: "Unknown"
-		: "Unknown";
-	const runningLabel = status
-		? status.currentRun?.status === "running"
-			? "Live run"
-			: status.currentRun?.status === "blocked"
-				? "Blocked"
-				: status.running === true
-					? "Running"
-					: status.running === false
-						? "Stopped"
-						: "Unknown"
-		: "Unknown";
 	const canCancel = Boolean(status?.canCancel && !isCancelling);
 
 	return (
@@ -146,29 +127,26 @@ export function TelegramStatusCard({
 					</div>
 				</div>
 			</CardHeader>
-			<CardContent className="py-6 space-y-4">
-				<div className="flex items-center justify-between gap-4">
+			<CardContent className="space-y-4 py-5">
+				<div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
 					<ConnectionStatusIndicator status={connectionState} />
-					<div className="flex items-center gap-2">
-						<Badge variant="outline">{enabledLabel}</Badge>
-						<Badge variant="outline">{runningLabel}</Badge>
-					</div>
+					<span>{getStatusLabel(status, isLoading)}</span>
 				</div>
 
 				{errorText && (
-					<div className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive flex items-start gap-3">
+					<div className="flex items-start gap-3 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
 						<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
 						<span>{errorText}</span>
 					</div>
 				)}
 
-				<div className="grid gap-3 sm:grid-cols-3 text-sm">
+				<div className="grid gap-3 sm:grid-cols-2 text-sm">
 					<div className="rounded-lg border bg-muted/30 px-4 py-3">
 						<div className="text-muted-foreground">Channel</div>
 						<div className="font-medium">{status?.name || "telegram"}</div>
 					</div>
 					<div className="rounded-lg border bg-muted/30 px-4 py-3">
-						<div className="text-muted-foreground">Connection</div>
+						<div className="text-muted-foreground">State</div>
 						<div className="font-medium">
 							{status
 								? status.configured === false
@@ -177,32 +155,15 @@ export function TelegramStatusCard({
 								: "Unknown"}
 						</div>
 					</div>
-					<div className="rounded-lg border bg-muted/30 px-4 py-3">
-						<div className="text-muted-foreground">Live run</div>
-						<div className="font-medium">
-							{isLoading
-								? "Loading"
-								: status?.currentRun?.status === "running"
-									? "Running"
-									: status?.currentRun?.status === "blocked"
-										? "Blocked"
-										: "Idle"}
-						</div>
-					</div>
 				</div>
 
 				{status?.currentRun && (
 					<div className="rounded-xl border bg-card/70 p-4 space-y-3">
 						<div className="flex flex-wrap items-center justify-between gap-2">
 							<div className="font-medium">Current run</div>
-							<div className="flex items-center gap-2">
-								<Badge variant="outline">
-									{status.currentRun.source || "telegram"}
-								</Badge>
-								<Badge variant="outline">{status.currentRun.status}</Badge>
-								{status.rerunRequested && (
-									<Badge variant="outline">Update waiting</Badge>
-								)}
+							<div className="text-xs text-muted-foreground">
+								{status.currentRun.source || "telegram"}
+								{status.rerunRequested ? " · update waiting" : ""}
 							</div>
 						</div>
 						<div className="space-y-2 text-sm">

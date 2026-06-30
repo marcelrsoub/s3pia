@@ -1,5 +1,4 @@
 import type { ConnectionStatus } from "@/lib/channel-types";
-import { Badge } from "./ui/badge";
 
 interface ConnectionStatusProps {
 	status: ConnectionStatus;
@@ -36,11 +35,9 @@ export function ConnectionStatusIndicator({ status }: ConnectionStatusProps) {
 	const config = statusConfig[status];
 
 	return (
-		<div className="flex items-center gap-2">
+		<div className="flex items-center gap-2 text-sm">
 			<span className={`led-indicator ${config.ledClass}`} />
-			<Badge variant="outline" className={config.className}>
-				{config.label}
-			</Badge>
+			<span className="font-medium tracking-wide">{config.label}</span>
 		</div>
 	);
 }

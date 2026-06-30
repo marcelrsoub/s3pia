@@ -1,13 +1,6 @@
-import { CheckCircle2, RefreshCwIcon, Settings2 } from "lucide-react";
+import { Settings2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import Editor from "react-simple-code-editor";
-import {
-	Accordion,
-	AccordionContent,
-	AccordionItem,
-	AccordionTrigger,
-} from "./ui/accordion";
-import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import {
 	Card,
@@ -407,16 +400,7 @@ export function EnvEditor({
 	};
 
 	const providerOptions = aiPreferences?.providerOptions ?? [];
-	const selectedProviderOption =
-		providerOptions.find((provider) => provider.id === selectedProviderId) ??
-		providerOptions.find((provider) => provider.selected) ??
-		providerOptions.find((provider) => provider.configured) ??
-		providerOptions[0];
 	const visibleModels = providerModels;
-	const activeModelLabel = selectedModelRef
-		? visibleModels.find((model) => model.ref === selectedModelRef)?.name ||
-			selectedModelRef
-		: "Select a model";
 
 	const handleProviderChange = (nextProviderId: AiProviderId) => {
 		setSelectedProviderId(nextProviderId);
@@ -490,96 +474,59 @@ export function EnvEditor({
 	];
 	const editorArea = (
 		<div className="space-y-4">
-			<div className="rounded-lg border bg-muted/20 px-4 py-3 space-y-3">
-				<div className="flex flex-wrap items-start justify-between gap-3">
-					<div className="space-y-1">
-						<div className="text-sm font-medium">AI Providers</div>
-						<p className="text-xs text-muted-foreground">
-							Pick a provider first, then choose from that provider&apos;s model
-							list. This keeps OpenRouter and ChatGPT Plus separate and much
-							easier to scan.
-						</p>
-					</div>
-					<div className="flex flex-wrap gap-2">
-						<Badge variant="outline">
-							OpenRouter{" "}
-							{aiStatus?.providers?.openrouter?.configured
-								? "connected"
-								: "off"}
-						</Badge>
-						<Badge variant="outline">
-							ChatGPT{" "}
-							{aiStatus?.providers?.["openai-codex"]?.configured
-								? "connected"
-								: "off"}
-						</Badge>
-					</div>
-				</div>
-
-				<div className="grid gap-4 md:grid-cols-[minmax(0,220px)_minmax(0,1fr)]">
-					<div className="space-y-2">
-						<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-							Provider
-						</div>
-						<select
-							className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-							value={selectedProviderId}
-							onChange={(event) =>
-								handleProviderChange(event.target.value as AiProviderId)
-							}
-						>
-							{providerOptions.map((provider) => (
-								<option
-									key={provider.id}
-									value={provider.id}
-									disabled={!provider.configured}
-								>
-									{provider.label}{" "}
-									{provider.configured
-										? `(${provider.modelCount} models)`
-										: "(connect first)"}
-								</option>
-							))}
-						</select>
-						<p className="text-xs text-muted-foreground">
-							{selectedProviderOption?.configured
-								? `${selectedProviderOption.label} is connected and ready.`
-								: "Connect a provider before picking a model."}
-						</p>
-					</div>
-
-					<div className="space-y-2">
-						<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-							Model
-						</div>
-						<select
-							className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-							value={selectedModelRef}
-							onChange={(event) => setSelectedModelRef(event.target.value)}
-							disabled={visibleModels.length === 0}
-						>
-							<option value="" disabled>
-								{visibleModels.length > 0
-									? "Choose a model"
-									: "No models available"}
+			<div className="rounded-lg border bg-muted/20 p-4 space-y-3">
+				<div className="grid gap-3 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.2fr)_minmax(0,0.8fr)_auto_auto]">
+					<select
+						className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+						value={selectedProviderId}
+						onChange={(event) =>
+							handleProviderChange(event.target.value as AiProviderId)
+						}
+					>
+						{providerOptions.map((provider) => (
+							<option
+								key={provider.id}
+								value={provider.id}
+								disabled={!provider.configured}
+							>
+								{provider.label}
 							</option>
-							{visibleModels.map((model) => (
-								<option key={model.ref} value={model.ref}>
-									{model.name}
-									{model.name !== model.modelId ? ` (${model.modelId})` : ""}
-								</option>
-							))}
-						</select>
-						<p className="text-xs text-muted-foreground">
-							{visibleModels.length > 0
-								? `${visibleModels.length} model${visibleModels.length === 1 ? "" : "s"} shown for ${selectedProviderOption?.label || "the selected provider"}.`
-								: "No models are available for this provider yet."}
-						</p>
-					</div>
-				</div>
+						))}
+					</select>
 
-				<div className="flex flex-wrap items-center gap-3">
+					<select
+						className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+						value={selectedModelRef}
+						onChange={(event) => setSelectedModelRef(event.target.value)}
+						disabled={visibleModels.length === 0}
+					>
+						<option value="" disabled>
+							{visibleModels.length > 0 ? "Model" : "No models"}
+						</option>
+						{visibleModels.map((model) => (
+							<option key={model.ref} value={model.ref}>
+								{model.name}
+							</option>
+						))}
+					</select>
+
+					<select
+						className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+						value={selectedThinkingLevel}
+						onChange={(event) =>
+							setSelectedThinkingLevel(event.target.value as ThinkingLevel)
+						}
+					>
+						{thinkingLevelOptions.map((level) => (
+							<option key={level.value} value={level.value}>
+								{level.label}
+							</option>
+						))}
+					</select>
+
 					<Button
+						variant="outline"
+						size="sm"
 						onClick={handleConnectChatGpt}
 						disabled={
 							isConnectingChatGpt ||
@@ -589,77 +536,10 @@ export function EnvEditor({
 						{isConnectingChatGpt
 							? "Connecting..."
 							: aiStatus?.providers?.["openai-codex"]?.configured
-								? "ChatGPT Connected"
-								: "Connect ChatGPT Plus"}
+								? "ChatGPT"
+								: "Connect"}
 					</Button>
-					{aiStatus?.provider && (
-						<Badge variant="secondary">Active: {aiStatus.provider}</Badge>
-					)}
-					<Badge variant="outline">
-						Model: {selectedProviderOption?.label || "Provider"} /{" "}
-						{activeModelLabel}
-					</Badge>
-					{aiStatus?.thinkingLevel && (
-						<Badge variant="outline">Reasoning: {aiStatus.thinkingLevel}</Badge>
-					)}
-				</div>
 
-				{aiStatus?.chatgptLogin?.status === "awaiting_verification" && (
-					<div className="rounded-md border bg-background px-3 py-2 text-sm space-y-1">
-						<div className="text-muted-foreground">
-							Finish the ChatGPT sign-in in your browser:
-						</div>
-						<a
-							href={aiStatus.chatgptLogin.verificationUri}
-							target="_blank"
-							rel="noreferrer"
-							className="font-medium underline underline-offset-4"
-						>
-							{aiStatus.chatgptLogin.verificationUri}
-						</a>
-						<div className="font-mono text-base">
-							{aiStatus.chatgptLogin.userCode}
-						</div>
-					</div>
-				)}
-
-				{chatGptMessage && (
-					<div className="rounded-md border bg-background px-3 py-2 text-sm">
-						{chatGptMessage}
-					</div>
-				)}
-
-				<div className="grid gap-4 md:grid-cols-2">
-					<div className="space-y-2">
-						<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-							Reasoning
-						</div>
-						<select
-							className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-							value={selectedThinkingLevel}
-							onChange={(event) =>
-								setSelectedThinkingLevel(event.target.value as ThinkingLevel)
-							}
-						>
-							{thinkingLevelOptions.map((level) => (
-								<option key={level.value} value={level.value}>
-									{level.label}
-								</option>
-							))}
-						</select>
-						<p className="text-xs text-muted-foreground">
-							{thinkingLevelOptions.find(
-								(level) => level.value === selectedThinkingLevel,
-							)?.description || "Balanced reasoning depth for most tasks."}
-						</p>
-					</div>
-				</div>
-
-				<div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-background px-3 py-2">
-					<div className="text-xs text-muted-foreground">
-						Model and reasoning changes persist to the workspace and apply to
-						new agent runs.
-					</div>
 					<Button
 						onClick={handleSaveAiPreferences}
 						disabled={
@@ -668,9 +548,44 @@ export function EnvEditor({
 							!selectedModelRef
 						}
 					>
-						{isSavingAiPreferences ? "Saving..." : "Save AI Settings"}
+						{isSavingAiPreferences ? "Saving..." : "Save"}
 					</Button>
 				</div>
+
+				<div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+					<span>
+						{aiStatus?.providers?.openrouter?.configured
+							? "OpenRouter ready"
+							: "OpenRouter off"}
+						{" · "}
+						{aiStatus?.providers?.["openai-codex"]?.configured
+							? "ChatGPT ready"
+							: "ChatGPT off"}
+					</span>
+					<span>{visibleModels.length} models</span>
+				</div>
+
+				{aiStatus?.chatgptLogin?.status === "awaiting_verification" && (
+					<div className="rounded-md border bg-background px-3 py-2 text-sm">
+						<a
+							href={aiStatus.chatgptLogin.verificationUri}
+							target="_blank"
+							rel="noreferrer"
+							className="font-medium underline underline-offset-4"
+						>
+							{aiStatus.chatgptLogin.verificationUri}
+						</a>
+						<span className="ml-3 font-mono">
+							{aiStatus.chatgptLogin.userCode}
+						</span>
+					</div>
+				)}
+
+				{chatGptMessage && (
+					<div className="rounded-md border bg-background px-3 py-2 text-sm">
+						{chatGptMessage}
+					</div>
+				)}
 
 				{aiPreferencesMessage && (
 					<div className="rounded-md border bg-background px-3 py-2 text-sm">
@@ -683,71 +598,21 @@ export function EnvEditor({
 						{aiStatus.errorMessage}
 					</div>
 				)}
+
+				{saveResult && (
+					<div className="text-sm text-muted-foreground">
+						{saveResult.message}
+					</div>
+				)}
 			</div>
 
-			{saveResult && (
-				<div
-					className={`rounded-lg p-4 flex items-center gap-2 ${
-						saveResult.success
-							? "bg-green-500/10 text-green-600"
-							: "bg-destructive/10 text-destructive"
-					}`}
-				>
-					{saveResult.success ? (
-						<CheckCircle2 className="h-5 w-5" />
-					) : (
-						<RefreshCwIcon className="h-5 w-5" />
-					)}
-					<span className="text-sm font-medium">{saveResult.message}</span>
-				</div>
-			)}
-
-			<Accordion type="single" collapsible className="flex-shrink-0">
-				<AccordionItem value="info" className="border-muted">
-					<AccordionTrigger className="hover:no-underline">
-						<div className="flex items-center gap-2 text-sm">
-							<RefreshCwIcon className="h-4 w-4" />
-							<span>Environment File Info</span>
-						</div>
-					</AccordionTrigger>
-					<AccordionContent>
-						<div className="pl-6 text-sm">
-							<p className="text-muted-foreground">
-								Located at <code className="text-xs">/app/ws/config/.env</code>.
-								Each line should be in{" "}
-								<code className="text-xs">KEY=VALUE</code>
-								format.
-							</p>
-							<ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2">
-								<li>
-									Secret keys ending in{" "}
-									<code className="text-xs">_API_KEY</code> or{" "}
-									<code className="text-xs">_TOKEN</code> are masked from the
-									model
-								</li>
-								<li>
-									The agent can add new variables via{" "}
-									<code className="text-xs">set_env_var</code> while processing
-									Telegram messages
-								</li>
-								<li>
-									AI provider and model are selected above, so you usually do
-									not need to edit <code className="text-xs">AI_MODEL</code>{" "}
-									manually.
-								</li>
-							</ul>
-						</div>
-					</AccordionContent>
-				</AccordionItem>
-			</Accordion>
-
-			<div className="relative border rounded-md bg-[#1e1e1e] overflow-auto">
+			<div className="relative overflow-auto rounded-md border bg-[#1e1e1e]">
 				<Editor
 					value={envContent}
 					onValueChange={setEnvContent}
 					highlight={highlightEnv}
-					padding={16}
-					className="font-mono text-sm min-h-[300px] focus:outline-none"
+					padding={14}
+					className="font-mono text-sm min-h-[280px] focus:outline-none"
 					textareaClassName="focus:outline-none"
 					style={{
 						backgroundColor: "#1e1e1e",
@@ -758,7 +623,8 @@ export function EnvEditor({
 				/>
 			</div>
 
-			<div className="flex justify-end">
+			<div className="flex items-center justify-between gap-3">
+				<div className="text-xs text-muted-foreground">/app/ws/config/.env</div>
 				<Button
 					onClick={handleSave}
 					disabled={isLoading || !envContent.trim()}
@@ -778,12 +644,10 @@ export function EnvEditor({
 					<CardTitle>
 						<div className="flex items-center gap-2">
 							<Settings2 className="h-5 w-5" />
-							<span className="font-retro text-lg">ENVIRONMENT VARIABLES</span>
+							<span className="font-retro text-lg">ENVIRONMENT</span>
 						</div>
 					</CardTitle>
-					<CardDescription>
-						Edit /app/ws/config/.env directly. Changes take effect immediately.
-					</CardDescription>
+					<CardDescription>Edit the workspace env file.</CardDescription>
 				</CardHeader>
 				<CardContent className="px-6 py-6">{editorArea}</CardContent>
 			</Card>
@@ -797,12 +661,10 @@ export function EnvEditor({
 					<DialogTitle>
 						<div className="flex items-center gap-2">
 							<Settings2 className="h-5 w-5" />
-							<span className="font-retro text-lg">ENVIRONMENT VARIABLES</span>
+							<span className="font-retro text-lg">ENVIRONMENT</span>
 						</div>
 					</DialogTitle>
-					<DialogDescription>
-						Edit /app/ws/config/.env directly. Changes take effect immediately.
-					</DialogDescription>
+					<DialogDescription>Edit the workspace env file.</DialogDescription>
 				</DialogHeader>
 
 				<div className="flex-1 overflow-hidden flex flex-col p-6 bg-background">
