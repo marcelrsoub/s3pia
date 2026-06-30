@@ -52,23 +52,16 @@ if [ ! -f "$ENV_FILE" ]; then
         # Create minimal .env if template missing
         cat > "$ENV_FILE" << 'EOF'
 # SepiaBot Configuration
-# Configure your AI provider below or use the web UI (click gear icon)
+# Configure OpenRouter below or use the web UI (click gear icon)
 
 # ====== AI PROVIDER CONFIGURATION (Required) ======
 
 # AI Provider Selection
-# Options: zai, openrouter, anthropic, openai, deepseek, groq, gemini
-AI_PROVIDER=
+AI_PROVIDER=openrouter
 AI_MODEL=
 
-# API Keys - Set the one for your chosen provider
-ZAI_API_KEY=
+# API Keys - OpenRouter is the only supported provider
 OPENROUTER_API_KEY=
-ANTHROPIC_API_KEY=
-OPENAI_API_KEY=
-DEEPSEEK_API_KEY=
-GROQ_API_KEY=
-GEMINI_API_KEY=
 
 # ====== OPTIONAL FEATURES ======
 

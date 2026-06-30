@@ -146,7 +146,7 @@ export async function deleteAPIKey(serviceName: string): Promise<void> {
  *
  * @example
  * const services = await getConfiguredServices();
- * // Returns: ["telegram", "zai", "openrouter", "tavily"]
+ * // Returns: ["telegram", "openrouter", "tavily"]
  */
 export async function getConfiguredServices(): Promise<string[]> {
 	const allSettings = await getAllEnvVarsWithMetadata();
