@@ -50,12 +50,14 @@ docker-compose --version
 
 ## Configuration
 
-All configuration is done via the `.env` file. Key settings:
+Most configuration lives in the `.env` file, but AI provider and model selection are managed from the dashboard after the first launch.
+
+Key settings:
 
 ```bash
-# Required: Configure OpenRouter
+# Provider credentials
 OPENROUTER_API_KEY=your_key_here
-AI_MODEL=anthropic/claude-sonnet-4
+OPENAI_API_KEY=your_key_here
 
 # Optional: Telegram bot
 TELEGRAM_BOT_TOKEN=your_bot_token
@@ -68,7 +70,7 @@ TAVILY_API_KEY=your_tavily_key
 PORT=3210
 ```
 
-You can also configure Telegram status and environment variables through the dashboard after first launch.
+If you want a default provider or model for a fresh workspace, you can set `AI_PROVIDER` and `AI_MODEL` in `.env`, but the dashboard is the main place to manage them once the app is running.
 
 ---
 

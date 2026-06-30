@@ -1,6 +1,6 @@
 <p align="center"><img src="frontend/public/logo.svg" alt="S3pia" width="400"></p>
 
-S3pia is a self-contained AI assistant that runs in one Docker container. It chats through Telegram, uses OpenRouter for AI, and keeps its state in a persistent workspace.
+S3pia is a self-contained AI assistant that runs in one Docker container. It chats through Telegram, lets you pick AI providers and models from the dashboard, and keeps its state in a persistent workspace.
 
 ## Quick Start
 
@@ -25,14 +25,16 @@ Then open `http://localhost:3210` to edit config and check Telegram status.
 
 ## AI Backend
 
-OpenRouter is the only supported LLM backend.
+AI provider and model selection happen in the dashboard after first launch.
 
-Set these values in `/app/ws/config/.env`:
+Set the provider credentials you need in `/app/ws/config/.env`:
 
 ```bash
 OPENROUTER_API_KEY=your_key_here
-AI_MODEL=anthropic/claude-sonnet-4
+OPENAI_API_KEY=your_key_here
 ```
+
+If you want a default provider/model for a fresh workspace, you can still set `AI_PROVIDER` and `AI_MODEL` in `.env`, but the dashboard is the source of truth once the app is running.
 
 ## Telegram
 
