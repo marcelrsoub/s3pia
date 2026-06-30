@@ -147,6 +147,24 @@ interface LiveRunConversationStore {
 const PI_WORKSPACE = workspacePath();
 const PI_AGENT_DIR = workspacePath(".pi", "agent");
 const PI_SESSION_DIR = workspacePath(".pi", "sessions");
+export const LIVE_BUILTIN_TOOL_NAMES = [
+	"read",
+	"write",
+	"edit",
+	"bash",
+	"grep",
+	"find",
+	"ls",
+] as const;
+export const LIVE_CUSTOM_TOOL_NAMES = [
+	"refresh_thread",
+	"send_message",
+	"ask_user",
+] as const;
+export const LIVE_SESSION_TOOL_NAMES = [
+	...LIVE_BUILTIN_TOOL_NAMES,
+	...LIVE_CUSTOM_TOOL_NAMES,
+] as const;
 
 function summarizePreview(text: string): string {
 	const normalized = text.trim().replace(/\s+/g, " ");
@@ -1182,7 +1200,7 @@ export class LiveRunCoordinator {
 			sessionManager,
 			resourceLoader,
 			...(selectedModel ? { model: selectedModel } : {}),
-			tools: ["read", "write", "edit", "bash", "grep", "find", "ls"],
+			tools: [...LIVE_SESSION_TOOL_NAMES],
 			customTools: createPiCustomTools(
 				conversationId,
 				state,
