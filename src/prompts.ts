@@ -1,4 +1,4 @@
-import { getSkills } from "./skills.js";
+import { LIVE_AGENT_POLICY, LIVE_SKILLS_POINTER } from "./agent-policy.js";
 import { workspacePath } from "./workspace.js";
 
 const WORKSPACE = workspacePath();
@@ -16,8 +16,7 @@ export function clearWorkspaceContextCache(): void {
 let cachedWorkspaceContext: string | null = null;
 
 /**
- * Load workspace context files (BOOTSTRAP.md, IDENTITY.md, SOUL.md, USER.md).
- * These are the agent-visible workspace seeds and mutable context.
+ * Load the mutable workspace context that should remain available to the agent.
  */
 export async function loadWorkspaceContext(): Promise<string> {
 	// Return cached value if available
@@ -27,15 +26,7 @@ export async function loadWorkspaceContext(): Promise<string> {
 
 	const contextParts: string[] = [];
 
-	// Load files in order (BOOTSTRAP first for onboarding)
-	const bootstrapFile = Bun.file(`${WORKSPACE}/BOOTSTRAP.md`);
-	if (await bootstrapFile.exists()) {
-		const content = await bootstrapFile.text();
-		contextParts.push(`## BOOTSTRAP\n${content}`);
-		console.log("[Prompts] Loaded BOOTSTRAP.md");
-	}
-
-	// Then load identity and personality files
+	// Load identity and personality files
 	const contextFiles = ["IDENTITY.md", "SOUL.md", "USER.md"];
 
 	for (const fileName of contextFiles) {
@@ -54,16 +45,11 @@ export async function loadWorkspaceContext(): Promise<string> {
 		}
 	}
 
+	contextParts.push(LIVE_AGENT_POLICY);
+	contextParts.push(`## SKILLS\n\n${LIVE_SKILLS_POINTER}`);
 	contextParts.push(
-		"## SYSTEM STATUS\n\nTelegram is the only user-facing channel. Use `send_message` for any user-visible update and `ask_user` when you need one blocking answer. Both tools send their visible output to Telegram. If the user should see an image or file, attach workspace paths with the `files` parameter instead of only mentioning them in text. Keep replies mobile-friendly: short paragraphs, bullets, numbered steps, and one idea per line.\n\nYou are running inside Docker. You can use only the ports and services already exposed by the container, and you cannot publish new host ports from inside the run. If something needs to be reachable externally, ask for an external container or compose change.",
+		"## SYSTEM STATUS\n\nYou are running inside Docker. You can use only the ports and services already exposed by the container, and you cannot publish new host ports from inside the run. If something needs to be reachable externally, ask for an external container or compose change.",
 	);
-
-	const skillsSummary = await getSkills().getSkillsSummary();
-	if (skillsSummary && skillsSummary !== "No skills available.") {
-		contextParts.push(
-			`## AVAILABLE SKILLS\n\n${skillsSummary}\n\nRead the relevant skill file when you need the detailed workflow or tool-specific guidance.`,
-		);
-	}
 
 	const result = contextParts.join("\n\n");
 	cachedWorkspaceContext = result;

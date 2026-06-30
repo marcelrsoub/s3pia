@@ -1,13 +1,12 @@
 # Telegram Live Messaging
 
-Use this skill for the live Telegram conversation with the admin.
+Quick reference for live Telegram work. The canonical live policy is injected at runtime.
 
 ## Core Tools
 
-- These are real runtime tools, not workarounds:
-- `send_message` sends a Telegram update
-- `refresh_thread` reloads the latest conversation state
-- `ask_user` pauses the run and asks one blocking question
+- `send_message` sends visible progress, partial results, or final replies
+- `refresh_thread` reloads the latest live thread state
+- `ask_user` pauses the run for one blocking answer
 
 ## Rules
 
@@ -17,12 +16,6 @@ Use this skill for the live Telegram conversation with the admin.
 - Do not rely on mentioning filenames in text alone.
 - Do not use bash/curl to impersonate Telegram output when `send_message` is available.
 - Use `refresh_thread` before continuing if new user messages may have arrived while you were working.
-
-## When To Use Each Tool
-
-- `send_message`: progress updates, partial results, or final replies
-- `ask_user`: when the task cannot continue without one missing answer
-- `refresh_thread`: when the conversation may have changed during a long run
 
 ## File Handling
 
