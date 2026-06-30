@@ -285,7 +285,7 @@ function toAssistantTextContent(
 }
 
 function normalizeAssistantText(text: string): string {
-	return text.trim().replace(/\s+/g, " ");
+	return text.trim();
 }
 
 function extractTextFromMessage(message: unknown): string | undefined {
@@ -318,7 +318,7 @@ function extractTextFromMessage(message: unknown): string | undefined {
 				}
 				return "";
 			})
-			.join(" ");
+			.join("\n");
 		const normalized = normalizeAssistantText(text);
 		return normalized || undefined;
 	}
@@ -522,6 +522,7 @@ function createPiCustomTools(
 				"Include workspace file paths in files when the user should see an image, screenshot, chart, or file.",
 				"Format the message for Telegram using supported markdown when it helps readability.",
 				"Prefer bold, inline code, links, bullets, and short paragraphs.",
+				"Prefer multiple short lines or bullets over one long paragraph.",
 				"Avoid tables; Telegram formatting is strongest with short, simple messages.",
 				"Keep the message concise and mobile-friendly.",
 			],
@@ -599,6 +600,7 @@ function createPiCustomTools(
 		promptSnippet: "Pause and ask one clear question",
 		promptGuidelines: [
 			"Use ask_user only when the run cannot continue without exactly one missing answer.",
+			"Ask in one short paragraph or a small number of short lines.",
 			"Ask one specific question and stop after calling ask_user.",
 		],
 		parameters: Type.Object({

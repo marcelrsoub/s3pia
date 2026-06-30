@@ -22,6 +22,46 @@ export interface SendTelegramResult {
 const TELEGRAM_MESSAGE_CHUNK_LIMIT = 3600;
 const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
 
+function normalizeTelegramWhitespace(text: string): string {
+	return text.replace(/\r\n/g, "\n").trim().replace(/\n{3,}/g, "\n\n");
+}
+
+function breakInlineNumberedList(text: string): string {
+	return text.replace(/([^\n])\s+(\d+\.\s)/g, "$1\n$2");
+}
+
+function splitDenseTelegramParagraph(text: string): string {
+	if (text.includes("\n")) {
+		return text;
+	}
+
+	const sentenceParts = text.split(/(?<=[.!?])\s+(?=[A-Z0-9#*`[])/).filter(Boolean);
+	if (
+		text.length >= 50 &&
+		sentenceParts.length >= 2 &&
+		sentenceParts.length <= 5
+	) {
+		return sentenceParts.join("\n");
+	}
+
+	const semicolonParts = text.split(/;\s+/).filter(Boolean);
+	if (semicolonParts.length >= 2 && semicolonParts.length <= 4) {
+		return semicolonParts.join("\n");
+	}
+
+	return text;
+}
+
+export function prettifyTelegramText(text: string): string {
+	const normalized = normalizeTelegramWhitespace(text);
+	if (!normalized) {
+		return "";
+	}
+
+	const withInlineLists = breakInlineNumberedList(normalized);
+	return splitDenseTelegramParagraph(withInlineLists);
+}
+
 function getTelegramBotToken(): string | null {
 	return getEnvVar("TELEGRAM_BOT_TOKEN") || null;
 }
@@ -94,7 +134,7 @@ function splitTelegramTextIntoChunks(
 	text: string,
 	maxChars = TELEGRAM_MESSAGE_CHUNK_LIMIT,
 ): string[] {
-	const normalized = text.replace(/\r\n/g, "\n").trim();
+	const normalized = prettifyTelegramText(text);
 	if (!normalized) {
 		return [""];
 	}

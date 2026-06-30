@@ -27,6 +27,8 @@ Quick reference for live Telegram work. The canonical live policy is injected at
 
 - Prefer one idea per line.
 - Use bullets or short numbered steps.
+- Default to 2-5 short lines instead of a single paragraph.
+- Add a blank line between distinct ideas when it improves scanability.
 - Avoid long preambles.
 
 ## Notes

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import {
 	normalizeWorkspaceFilePath,
+	prettifyTelegramText,
 	sendTelegramMessageToAdmin,
 } from "../src/telegram-client";
 import { workspacePath } from "../src/workspace";
@@ -165,6 +166,24 @@ test("formats markdown into Telegram entities", async () => {
 			process.env.ADMIN_TELEGRAM_ID = previousAdminId;
 		}
 	}
+});
+
+test("prettifies dense plain text into short Telegram lines", () => {
+	expect(
+		prettifyTelegramText(
+			"This is the first update. This is the second update. This is the final update.",
+		),
+	).toBe(
+		"This is the first update.\nThis is the second update.\nThis is the final update.",
+	);
+});
+
+test("breaks inline numbered lists onto separate Telegram lines", () => {
+	expect(
+		prettifyTelegramText(
+			"Plan: 1. Check logs 2. Restart the service 3. Confirm recovery",
+		),
+	).toBe("Plan:\n1. Check logs\n2. Restart the service\n3. Confirm recovery");
 });
 
 test("splits long messages into plain text chunks", async () => {
