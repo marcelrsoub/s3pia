@@ -459,9 +459,19 @@ function restoreTelegramHtmlPlaceholders(
 		restored = restored.split(placeholder).join(replacement);
 	}
 
-	if (restored.includes("\u0000TGPH")) {
+	const leakedPlaceholderPrefix = "\u0000TG-PLACEHOLDER-";
+	const leakedPlaceholderIndex = restored.indexOf(leakedPlaceholderPrefix);
+	if (leakedPlaceholderIndex !== -1) {
+		const leakedPlaceholderEnd = restored.indexOf(
+			"\u0000",
+			leakedPlaceholderIndex + leakedPlaceholderPrefix.length,
+		);
+		const leakedPlaceholder =
+			leakedPlaceholderEnd === -1
+				? restored.slice(leakedPlaceholderIndex)
+				: restored.slice(leakedPlaceholderIndex, leakedPlaceholderEnd + 1);
 		throw new Error(
-			"[Telegram] Internal placeholder leaked from Telegram HTML formatter",
+			`[Telegram] Internal placeholder leaked from Telegram HTML formatter: ${leakedPlaceholder}`,
 		);
 	}
 
@@ -479,7 +489,7 @@ export function formatTelegramHtml(text: string): string {
 	const protectedParts: ProtectedPart[] = [];
 	let placeholderIndex = 0;
 	const protect = (replacement: string): string => {
-		const placeholder = `\u0000TGPH${placeholderIndex++}\u0000`;
+		const placeholder = `\u0000TG-PLACEHOLDER-${placeholderIndex++}\u0000`;
 		protectedParts.push({ placeholder, replacement });
 		return placeholder;
 	};

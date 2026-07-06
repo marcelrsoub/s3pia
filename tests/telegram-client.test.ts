@@ -165,7 +165,9 @@ test("preserves literal PH tokens while formatting Telegram HTML", () => {
 	expect(formatted).toContain(
 		'<a href="https://example.com">link</a>',
 	);
-	expect(formatted).not.toMatch(/\u0000TGPH\d+\u0000/);
+	expect(formatted).not.toMatch(
+		new RegExp("\\u0000TG-PLACEHOLDER-\\d+\\u0000"),
+	);
 });
 
 test("prettifies dense plain text into short Telegram lines", () => {

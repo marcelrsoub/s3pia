@@ -14,7 +14,21 @@ import { workspacePath } from "./workspace.js";
 
 const TASKS_FILE = workspacePath("tasks", "scheduled.md");
 const CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
-const COACH_PLANNER_TASK_PATTERN = /\b(?:coach|coaching|planner|strategy)\b/i;
+const COACH_PLANNER_TASK_DIRECT_PATTERNS = [
+	/\bcoach(?:ing)?\b/i,
+	/\bplanner\b/i,
+	/\bstrategy\b/i,
+];
+const COACH_PLANNER_TASK_CADENCE_PATTERNS = [
+	/\bdaily\b/i,
+	/\bweekly\b/i,
+	/\bmonthly\b/i,
+];
+const COACH_PLANNER_TASK_REVIEW_PATTERNS = [
+	/\breview\b/i,
+	/\bbrief(?:ing)?\b/i,
+	/\baccountability\b/i,
+];
 
 /**
  * Calculate milliseconds until the next aligned time (:00, :10, :20, :30, :40, :50)
@@ -43,8 +57,23 @@ export interface ScheduledTask {
 	lastRun?: string; // ISO timestamp
 }
 
-function isCoachPlannerTask(task: ScheduledTask): boolean {
-	return COACH_PLANNER_TASK_PATTERN.test(`${task.name}\n${task.action}`);
+export function isCoachPlannerTask(task: ScheduledTask): boolean {
+	const text = `${task.name}\n${task.action}`;
+
+	if (
+		COACH_PLANNER_TASK_DIRECT_PATTERNS.some((pattern) => pattern.test(text))
+	) {
+		return true;
+	}
+
+	const hasCadence = COACH_PLANNER_TASK_CADENCE_PATTERNS.some((pattern) =>
+		pattern.test(text),
+	);
+	const hasReviewStyleIntent = COACH_PLANNER_TASK_REVIEW_PATTERNS.some(
+		(pattern) => pattern.test(text),
+	);
+
+	return hasCadence && hasReviewStyleIntent;
 }
 
 export function parseScheduledTasks(content: string): ScheduledTask[] {

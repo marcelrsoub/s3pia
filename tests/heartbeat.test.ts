@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
+	isCoachPlannerTask,
 	parseScheduledTasks,
 	updateScheduledTasksContent,
 } from "../src/heartbeat";
@@ -206,4 +207,40 @@ Action: Keep me
 	expect(parseScheduledTasks(updated).some((task) => task.name === "Following Task")).toBe(
 		true,
 	);
+});
+
+test("classifies daily coaching tasks as planner tasks", () => {
+	expect(
+		isCoachPlannerTask({
+			name: "Daily Coaching Brief",
+			action: "Be Marcel's daily coach and mentor.",
+		}),
+	).toBe(true);
+});
+
+test("classifies weekly review tasks as planner tasks", () => {
+	expect(
+		isCoachPlannerTask({
+			name: "Weekly Review",
+			action: "Run the full weekly review.",
+		}),
+	).toBe(true);
+});
+
+test("classifies monthly review tasks as planner tasks", () => {
+	expect(
+		isCoachPlannerTask({
+			name: "Monthly Review",
+			action: "Run the full monthly review.",
+		}),
+	).toBe(true);
+});
+
+test("does not classify unrelated tasks as planner tasks", () => {
+	expect(
+		isCoachPlannerTask({
+			name: "Water Plants",
+			action: "Water the plants in the balcony.",
+		}),
+	).toBe(false);
 });
