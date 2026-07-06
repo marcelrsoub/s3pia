@@ -323,3 +323,66 @@ test("splits long messages into plain text chunks", async () => {
 		}
 	}
 });
+
+test("retries failed HTML sends with the original plain text", async () => {
+	const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;
+	const originalFetch = globalThis.fetch;
+	const sentMessages: Array<{
+		chat_id: number;
+		text: string;
+		parse_mode?: string;
+	}> = [];
+
+	process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+	process.env.ADMIN_TELEGRAM_ID = "123";
+
+	globalThis.fetch = (async (input, init) => {
+		const url = String(input);
+		if (url.includes("/sendMessage")) {
+			const payload = JSON.parse(String(init?.body)) as {
+				chat_id: number;
+				text: string;
+				parse_mode?: string;
+			};
+			sentMessages.push(payload);
+			const ok = sentMessages.length > 1;
+			return new Response(
+				JSON.stringify(
+					ok
+						? { ok: true }
+						: { ok: false, description: "can't parse entities" },
+				),
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		}
+		throw new Error(`Unexpected fetch: ${url}`);
+	}) as typeof fetch;
+
+	try {
+		const result = await sendTelegramMessageToAdmin("Hello **world**");
+
+		expect(result.messageDelivered).toBe(true);
+		expect(sentMessages).toHaveLength(2);
+		expect(sentMessages[0]?.parse_mode).toBe("HTML");
+		expect(sentMessages[0]?.text).toContain("<b>world</b>");
+		expect(sentMessages[1]?.parse_mode).toBeUndefined();
+		expect(sentMessages[1]?.text).toBe("Hello **world**");
+		expect(sentMessages[1]?.text).not.toContain("<b>");
+	} finally {
+		globalThis.fetch = originalFetch;
+		if (previousToken === undefined) {
+			delete process.env.TELEGRAM_BOT_TOKEN;
+		} else {
+			process.env.TELEGRAM_BOT_TOKEN = previousToken;
+		}
+		if (previousAdminId === undefined) {
+			delete process.env.ADMIN_TELEGRAM_ID;
+		} else {
+			process.env.ADMIN_TELEGRAM_ID = previousAdminId;
+		}
+	}
+});

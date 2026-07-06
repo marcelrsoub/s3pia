@@ -76,6 +76,14 @@ export function isCoachPlannerTask(task: ScheduledTask): boolean {
 	return hasCadence && hasReviewStyleIntent;
 }
 
+export function getScheduledRunSource(
+	dueTasks: ScheduledTask[],
+): "planner" | "scheduled" {
+	return dueTasks.length > 0 && dueTasks.every(isCoachPlannerTask)
+		? "planner"
+		: "scheduled";
+}
+
 export function parseScheduledTasks(content: string): ScheduledTask[] {
 	const tasks: ScheduledTask[] = [];
 	const activeSectionMatch = content.match(/##\s*Active Tasks\n([\s\S]*)/);
@@ -320,9 +328,7 @@ export class HeartbeatScheduler {
 
 		if (dueTasks.length > 0) {
 			const prompt = this.buildScheduledPrompt(dueTasks);
-			const source = dueTasks.some(isCoachPlannerTask)
-				? "planner"
-				: "scheduled";
+			const source = getScheduledRunSource(dueTasks);
 			conversationStore.addMessage(
 				TELEGRAM_CONVERSATION_ID,
 				"worker",

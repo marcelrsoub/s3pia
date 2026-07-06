@@ -806,7 +806,8 @@ async function sendTelegramText(
 	try {
 		const htmlMessage = formatTelegramHtml(text);
 		const chunks = splitTelegramHtmlIntoChunks(htmlMessage);
-		for (const chunk of chunks) {
+		const plainChunks = splitTelegramTextIntoChunks(text);
+		for (const [index, chunk] of chunks.entries()) {
 			const sent = await sendTelegramRawMessage(
 				chatId,
 				chunk,
@@ -816,7 +817,7 @@ async function sendTelegramText(
 			if (!sent) {
 				const plain = await sendTelegramRawMessage(
 					chatId,
-					chunk,
+					plainChunks[index] ?? text,
 					"plain",
 					abortSignal,
 				);

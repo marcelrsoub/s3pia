@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
+	getScheduledRunSource,
 	isCoachPlannerTask,
 	parseScheduledTasks,
 	updateScheduledTasksContent,
@@ -243,4 +244,32 @@ test("does not classify unrelated tasks as planner tasks", () => {
 			action: "Water the plants in the balcony.",
 		}),
 	).toBe(false);
+});
+
+test("uses planner source only when every due task is planner-like", () => {
+	expect(
+		getScheduledRunSource([
+			{
+				name: "Weekly Review",
+				action: "Run the full weekly review.",
+			},
+			{
+				name: "Daily Coaching Brief",
+				action: "Be Marcel's daily coach and mentor.",
+			},
+		]),
+	).toBe("planner");
+
+	expect(
+		getScheduledRunSource([
+			{
+				name: "Weekly Review",
+				action: "Run the full weekly review.",
+			},
+			{
+				name: "Water Plants",
+				action: "Water the plants in the balcony.",
+			},
+		]),
+	).toBe("scheduled");
 });
