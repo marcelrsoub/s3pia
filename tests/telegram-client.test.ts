@@ -154,6 +154,77 @@ test("formats markdown into Telegram entities", async () => {
 	}
 });
 
+test("keeps Telegram formatting across long markdown messages", async () => {
+	const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+	const previousAdminId = process.env.ADMIN_TELEGRAM_ID;
+	const originalFetch = globalThis.fetch;
+	const sentMessages: Array<{
+		chat_id: number;
+		text: string;
+		parse_mode?: string;
+	}> = [];
+
+	process.env.TELEGRAM_BOT_TOKEN = "bot-token";
+	process.env.ADMIN_TELEGRAM_ID = "123";
+
+	const repeatedLine =
+		"Long update **bold** _italic_ [docs](https://example.com) with `code` and a short sentence.";
+	const longMessage = Array.from({ length: 80 }, (_, index) =>
+		`${index + 1}. ${repeatedLine}`,
+	).join("\n\n");
+
+	globalThis.fetch = (async (input, init) => {
+		const url = String(input);
+		if (url.includes("/sendMessage")) {
+			sentMessages.push(
+				JSON.parse(String(init?.body)) as {
+					chat_id: number;
+					text: string;
+					parse_mode?: string;
+				},
+			);
+			return new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+		throw new Error(`Unexpected fetch: ${url}`);
+	}) as typeof fetch;
+
+	try {
+		const result = await sendTelegramMessageToAdmin(longMessage);
+
+		expect(result.messageDelivered).toBe(true);
+		expect(sentMessages.length).toBeGreaterThan(1);
+		expect(sentMessages.every((message) => message.parse_mode === "HTML")).toBe(
+			true,
+		);
+		expect(sentMessages.some((message) => message.text.includes("<b>bold</b>"))).toBe(
+			true,
+		);
+		expect(sentMessages.some((message) => message.text.includes("<i>italic</i>"))).toBe(
+			true,
+		);
+		expect(
+			sentMessages.some((message) =>
+				message.text.includes('<a href="https://example.com">docs</a>'),
+			),
+		).toBe(true);
+	} finally {
+		globalThis.fetch = originalFetch;
+		if (previousToken === undefined) {
+			delete process.env.TELEGRAM_BOT_TOKEN;
+		} else {
+			process.env.TELEGRAM_BOT_TOKEN = previousToken;
+		}
+		if (previousAdminId === undefined) {
+			delete process.env.ADMIN_TELEGRAM_ID;
+		} else {
+			process.env.ADMIN_TELEGRAM_ID = previousAdminId;
+		}
+	}
+});
+
 test("preserves literal PH tokens while formatting Telegram HTML", () => {
 	const formatted = formatTelegramHtml(
 		"hello PH13 **bold** _italic_ [link](https://example.com)",

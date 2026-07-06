@@ -478,6 +478,188 @@ function restoreTelegramHtmlPlaceholders(
 	return restored;
 }
 
+function getTelegramHtmlTagName(tag: string): string | null {
+	const match = tag.match(/^<\/?\s*([a-z0-9]+)\b/i);
+	return match?.[1]?.toLowerCase() ?? null;
+}
+
+function isTelegramHtmlSelfClosingTag(tag: string): boolean {
+	return /\/>\s*$/.test(tag);
+}
+
+function getTelegramHtmlClosingTag(tagName: string): string {
+	return `</${tagName}>`;
+}
+
+function getTelegramHtmlReopenTag(tag: string): string {
+	return tag;
+}
+
+function splitTelegramTextByLimit(text: string, maxChars: number): string[] {
+	if (text.length <= maxChars) {
+		return [text];
+	}
+
+	const characters = Array.from(text);
+	const chunks: string[] = [];
+	let index = 0;
+
+	while (index < characters.length) {
+		const remaining = characters.length - index;
+		if (remaining <= maxChars) {
+			chunks.push(characters.slice(index).join(""));
+			break;
+		}
+
+		let splitAt = maxChars;
+		for (
+			let cursor = maxChars;
+			cursor > Math.floor(maxChars * 0.6);
+			cursor -= 1
+		) {
+			const candidate = characters[cursor];
+			if (candidate && /\s/.test(candidate)) {
+				splitAt = cursor;
+				break;
+			}
+		}
+
+		if (splitAt <= 0) {
+			splitAt = maxChars;
+		}
+
+		chunks.push(characters.slice(index, index + splitAt).join(""));
+		index += splitAt;
+		while (index < characters.length && /\s/.test(characters[index] ?? "")) {
+			index += 1;
+		}
+	}
+
+	return chunks;
+}
+
+function splitTelegramHtmlIntoChunks(
+	html: string,
+	maxChars = TELEGRAM_MESSAGE_CHUNK_LIMIT,
+): string[] {
+	if (html.length <= maxChars) {
+		return [html];
+	}
+
+	const tokens = html.match(/<\/?[^>]+>|[^<]+/g) ?? [];
+	const chunks: string[] = [];
+	let current = "";
+	let currentLength = 0;
+	const openTags: Array<{ name: string; tag: string }> = [];
+
+	const getOpenPrefix = (): string =>
+		openTags.map((entry) => entry.tag).join("");
+	const getOpenPrefixLength = (): number =>
+		openTags.reduce((length, entry) => length + entry.tag.length, 0);
+	const getClosingSuffix = (): string =>
+		[...openTags]
+			.reverse()
+			.map((entry) => getTelegramHtmlClosingTag(entry.name))
+			.join("");
+	const getClosingSuffixLength = (): number =>
+		openTags.reduce(
+			(length, entry) => length + getTelegramHtmlClosingTag(entry.name).length,
+			0,
+		);
+
+	const flushCurrent = (): void => {
+		if (current.length === 0) {
+			return;
+		}
+
+		chunks.push(`${current}${getClosingSuffix()}`);
+		current = getOpenPrefix();
+		currentLength = getOpenPrefixLength();
+	};
+
+	const appendText = (text: string): void => {
+		let remaining = text;
+		while (remaining.length > 0) {
+			const closingLength = getClosingSuffixLength();
+			const available = maxChars - currentLength - closingLength;
+			if (available <= 0) {
+				flushCurrent();
+				continue;
+			}
+
+			if (remaining.length <= available) {
+				current += remaining;
+				currentLength += remaining.length;
+				return;
+			}
+
+			const parts = splitTelegramTextByLimit(remaining, available);
+			const head = parts[0] ?? "";
+			const tail = parts.slice(1).join("");
+
+			if (head.length === 0) {
+				flushCurrent();
+				continue;
+			}
+
+			current += head;
+			currentLength += head.length;
+			remaining = tail;
+			flushCurrent();
+		}
+	};
+
+	for (const token of tokens) {
+		if (token.startsWith("<")) {
+			const tagName = getTelegramHtmlTagName(token);
+			if (!tagName) {
+				appendText(token);
+				continue;
+			}
+
+			const isClosingTag = token.startsWith("</");
+			const isSelfClosing = isTelegramHtmlSelfClosingTag(token);
+			const tokenLength = token.length;
+			const closingLength = getClosingSuffixLength();
+			if (
+				!isClosingTag &&
+				!isSelfClosing &&
+				currentLength + tokenLength + closingLength > maxChars &&
+				current.length > 0
+			) {
+				flushCurrent();
+			}
+
+			current += token;
+			currentLength += tokenLength;
+
+			if (!isClosingTag && !isSelfClosing) {
+				openTags.push({ name: tagName, tag: getTelegramHtmlReopenTag(token) });
+			} else if (isClosingTag) {
+				for (let index = openTags.length - 1; index >= 0; index -= 1) {
+					if (openTags[index]?.name === tagName) {
+						openTags.splice(index, 1);
+						break;
+					}
+				}
+			}
+
+			if (currentLength + getClosingSuffixLength() > maxChars) {
+				flushCurrent();
+			}
+			continue;
+		}
+
+		appendText(token);
+	}
+
+	if (current.length > 0) {
+		chunks.push(`${current}${getClosingSuffix()}`);
+	}
+
+	return chunks.length > 0 ? chunks : [""];
+}
+
 export function formatTelegramHtml(text: string): string {
 	const structuredText = normalizeTelegramMarkdownStructure(text);
 
@@ -621,13 +803,13 @@ async function sendTelegramText(
 	text: string,
 	abortSignal?: AbortSignal,
 ): Promise<boolean> {
-	const chunks = splitTelegramTextIntoChunks(text);
-	for (const chunk of chunks) {
-		try {
-			const htmlMessage = formatTelegramHtml(chunk);
+	try {
+		const htmlMessage = formatTelegramHtml(text);
+		const chunks = splitTelegramHtmlIntoChunks(htmlMessage);
+		for (const chunk of chunks) {
 			const sent = await sendTelegramRawMessage(
 				chatId,
-				htmlMessage,
+				chunk,
 				"html",
 				abortSignal,
 			);
@@ -640,8 +822,11 @@ async function sendTelegramText(
 				);
 				if (!plain) return false;
 			}
-		} catch (error) {
-			console.error("[Telegram] Failed to format Telegram HTML:", error);
+		}
+	} catch (error) {
+		console.error("[Telegram] Failed to format Telegram HTML:", error);
+		const chunks = splitTelegramTextIntoChunks(text);
+		for (const chunk of chunks) {
 			const plain = await sendTelegramRawMessage(
 				chatId,
 				chunk,
