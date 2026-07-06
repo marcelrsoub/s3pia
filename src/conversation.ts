@@ -16,7 +16,7 @@ export interface ConversationMetadata {
 	lastIntakeNextStep?: string;
 	lastIntakeGoal?: string;
 	activeRunId?: string;
-	activeRunSource?: "telegram" | "scheduled" | "manual";
+	activeRunSource?: "telegram" | "scheduled" | "manual" | "planner";
 	activeRunStatus?: "running" | "blocked";
 	activeRunPreview?: string;
 	activeRunQuestion?: string;
@@ -344,7 +344,6 @@ class ConversationStore {
 				console.error("[ConversationStore] Failed to save message:", err);
 			}
 		}
-
 	}
 
 	clear(id: string): void {

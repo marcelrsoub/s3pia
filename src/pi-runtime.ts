@@ -21,7 +21,14 @@ import {
 	TELEGRAM_CONVERSATION_ID,
 } from "./conversation.js";
 import { getEnvVar } from "./env.js";
-import { clearWorkspaceContextCache, loadWorkspaceContext } from "./prompts.js";
+import {
+	buildPlannerContext,
+	COACH_OS_CONTEXT_FILES,
+	CoachOSContextError,
+	clearWorkspaceContextCache,
+	loadWorkspaceContext,
+	WORKSPACE_CONTEXT_FILES,
+} from "./prompts.js";
 import {
 	buildWorkspaceAttachment,
 	sendTelegramMessageToAdmin,
@@ -31,7 +38,7 @@ import { workspacePath } from "./workspace.js";
 
 export type LiveRunStatus = "idle" | "running" | "blocked";
 
-export type LiveRunSource = "telegram" | "scheduled" | "manual";
+export type LiveRunSource = "telegram" | "scheduled" | "manual" | "planner";
 
 export type LiveRunTriggerKind =
 	| "new_run"
@@ -257,9 +264,8 @@ function isWorkspaceContextFile(path: string): boolean {
 	const file = basename(path);
 	return (
 		file === "BOOTSTRAP.md" ||
-		file === "IDENTITY.md" ||
-		file === "SOUL.md" ||
-		file === "USER.md"
+		WORKSPACE_CONTEXT_FILES.some((entry) => entry === file) ||
+		COACH_OS_CONTEXT_FILES.some((entry) => entry.filename === file)
 	);
 }
 
@@ -1163,6 +1169,7 @@ export class LiveRunCoordinator {
 		conversationId,
 		state,
 		store,
+		deliverer,
 	}: {
 		conversationId: string;
 		state: LiveRunState;
@@ -1183,11 +1190,43 @@ export class LiveRunCoordinator {
 			);
 		}
 
+		let systemPrompt: string;
+		try {
+			systemPrompt =
+				state.source === "planner"
+					? await buildPlannerContext()
+					: await loadWorkspaceContext();
+		} catch (error) {
+			if (error instanceof CoachOSContextError) {
+				const message = [
+					"Coach OS planner is blocked because required strategy files are missing or unreadable.",
+					`Missing: ${
+						error.missingRequired.length > 0
+							? error.missingRequired.join(", ")
+							: "none"
+					}`,
+					`Unreadable: ${
+						error.unreadableRequired.length > 0
+							? error.unreadableRequired.join(", ")
+							: "none"
+					}`,
+				].join("\n");
+				console.error(`[LiveRun] ${message.replace(/\n/g, " | ")}`);
+				await deliverer(message).catch((delivererError) => {
+					console.error(
+						"[LiveRun] Failed to report Coach OS context error:",
+						delivererError,
+					);
+				});
+			}
+			throw error;
+		}
+
 		const resourceLoader = new DefaultResourceLoader({
 			cwd: PI_WORKSPACE,
 			agentDir: PI_AGENT_DIR,
 			settingsManager,
-			appendSystemPrompt: [await loadWorkspaceContext()],
+			appendSystemPrompt: [systemPrompt],
 		});
 		await resourceLoader.reload();
 

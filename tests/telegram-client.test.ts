@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import {
+	formatTelegramHtml,
 	normalizeWorkspaceFilePath,
 	prettifyTelegramText,
 	sendTelegramMessageToAdmin,
@@ -97,12 +98,7 @@ test("formats markdown into Telegram entities", async () => {
 		| {
 				chat_id: number;
 				text: string;
-				entities?: Array<{
-					type: string;
-					offset: number;
-					length: number;
-					url?: string;
-				}>;
+				parse_mode?: string;
 		  }
 		| null = null;
 
@@ -115,12 +111,7 @@ test("formats markdown into Telegram entities", async () => {
 			sentMessage = JSON.parse(String(init?.body)) as {
 				chat_id: number;
 				text: string;
-				entities?: Array<{
-					type: string;
-					offset: number;
-					length: number;
-					url?: string;
-				}>;
+				parse_mode?: string;
 			};
 			return new Response(JSON.stringify({ ok: true }), {
 				status: 200,
@@ -136,23 +127,18 @@ test("formats markdown into Telegram entities", async () => {
 		);
 
 		expect(result.messageDelivered).toBe(true);
-		const payload = sentMessage;
-		if (!payload) {
+		expect(sentMessage).not.toBeNull();
+		if (!sentMessage) {
 			throw new Error("Expected a Telegram payload");
 		}
-		expect(payload.text).toBe(
-			"Summary\n\n- first item\n- second item\n\nUse file.txt and docs.",
+		const message = sentMessage as {
+			text: string;
+			parse_mode?: string;
+		};
+		expect(message.text).toBe(
+			"<b>Summary</b>\n\n• first item\n• second item\n\nUse <code>file.txt</code> and <a href=\"https://example.com\">docs</a>.",
 		);
-		expect(payload.entities).toEqual([
-			{ type: "bold", offset: 0, length: 7 },
-			{ type: "code", offset: 41, length: 8 },
-			{
-				type: "text_link",
-				offset: 54,
-				length: 4,
-				url: "https://example.com",
-			},
-		]);
+		expect(message.parse_mode).toBe("HTML");
 	} finally {
 		globalThis.fetch = originalFetch;
 		if (previousToken === undefined) {
@@ -166,6 +152,20 @@ test("formats markdown into Telegram entities", async () => {
 			process.env.ADMIN_TELEGRAM_ID = previousAdminId;
 		}
 	}
+});
+
+test("preserves literal PH tokens while formatting Telegram HTML", () => {
+	const formatted = formatTelegramHtml(
+		"hello PH13 **bold** _italic_ [link](https://example.com)",
+	);
+
+	expect(formatted).toContain("hello PH13");
+	expect(formatted).toContain("<b>bold</b>");
+	expect(formatted).toContain("<i>italic</i>");
+	expect(formatted).toContain(
+		'<a href="https://example.com">link</a>',
+	);
+	expect(formatted).not.toMatch(/\u0000TGPH\d+\u0000/);
 });
 
 test("prettifies dense plain text into short Telegram lines", () => {

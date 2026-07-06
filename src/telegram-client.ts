@@ -80,17 +80,17 @@ function normalizeTelegramMarkdownStructure(text: string): string {
 			nextLine &&
 			isMarkdownTableRow(line) &&
 			isMarkdownTableSeparatorLine(nextLine)
-			) {
-				const tableLines = [line, nextLine];
-				let cursor = index + 2;
-				while (cursor < lines.length) {
-					const tableLine = lines[cursor];
-					if (tableLine === undefined || !isMarkdownTableRow(tableLine)) {
-						break;
-					}
-					tableLines.push(tableLine);
-					cursor += 1;
+		) {
+			const tableLines = [line, nextLine];
+			let cursor = index + 2;
+			while (cursor < lines.length) {
+				const tableLine = lines[cursor];
+				if (tableLine === undefined || !isMarkdownTableRow(tableLine)) {
+					break;
 				}
+				tableLines.push(tableLine);
+				cursor += 1;
+			}
 
 			const renderedTable = renderTelegramTableBlock(tableLines);
 			normalized.push("```");
@@ -243,10 +243,7 @@ function renderTelegramTableBlock(lines: string[]): string {
 	});
 
 	const widths = Array.from({ length: columnCount }, (_, columnIndex) =>
-		Math.max(
-			3,
-			...normalizedRows.map((row) => row[columnIndex]?.length ?? 0),
-		),
+		Math.max(3, ...normalizedRows.map((row) => row[columnIndex]?.length ?? 0)),
 	);
 
 	const formatRow = (row: string[]): string =>
@@ -315,6 +312,52 @@ function splitLongTelegramParagraph(
 	}
 
 	return chunks;
+}
+
+function splitInlineNumberedList(paragraph: string): string[] | null {
+	const match = paragraph.match(/^(.*?)(\s+)(\d+\.\s+.*)$/s);
+	if (!match) {
+		return null;
+	}
+
+	const prefix = match[1]?.trimEnd() ?? "";
+	const itemsText = match[3] ?? "";
+	const items = itemsText.match(/\d+\.\s+.*?(?=(?:\s+\d+\.\s+)|$)/gs);
+	if (!items || items.length < 2) {
+		return null;
+	}
+
+	return [prefix, ...items.map((item) => item.trim())].filter(
+		(line) => line.length > 0,
+	);
+}
+
+function splitIntoSentences(paragraph: string): string[] {
+	const sentences = paragraph.match(/[^.!?]+[.!?]+|[^.!?]+$/g);
+	if (!sentences || sentences.length < 2) {
+		return [paragraph];
+	}
+
+	return sentences.map((sentence) => sentence.trim()).filter(Boolean);
+}
+
+export function prettifyTelegramText(text: string): string {
+	const normalized = text.replace(/\r\n/g, "\n").trim();
+	if (!normalized) {
+		return "";
+	}
+
+	const paragraphs = normalized.split(/\n{2,}/);
+	const formattedParagraphs = paragraphs.flatMap((paragraph) => {
+		const numberedList = splitInlineNumberedList(paragraph);
+		if (numberedList) {
+			return numberedList;
+		}
+
+		return splitIntoSentences(paragraph);
+	});
+
+	return formattedParagraphs.join("\n");
 }
 
 function splitTelegramTextIntoChunks(
@@ -407,7 +450,25 @@ function escapeTelegramHtmlAttribute(text: string): string {
 	return escapeTelegramHtml(text).replace(/"/g, "&quot;");
 }
 
-function formatTelegramHtml(text: string): string {
+function restoreTelegramHtmlPlaceholders(
+	text: string,
+	protectedParts: Array<{ placeholder: string; replacement: string }>,
+): string {
+	let restored = text;
+	for (const { placeholder, replacement } of protectedParts) {
+		restored = restored.split(placeholder).join(replacement);
+	}
+
+	if (restored.includes("\u0000TGPH")) {
+		throw new Error(
+			"[Telegram] Internal placeholder leaked from Telegram HTML formatter",
+		);
+	}
+
+	return restored;
+}
+
+export function formatTelegramHtml(text: string): string {
 	const structuredText = normalizeTelegramMarkdownStructure(text);
 
 	interface ProtectedPart {
@@ -418,7 +479,7 @@ function formatTelegramHtml(text: string): string {
 	const protectedParts: ProtectedPart[] = [];
 	let placeholderIndex = 0;
 	const protect = (replacement: string): string => {
-		const placeholder = `\x00PH${placeholderIndex++}\x00`;
+		const placeholder = `\u0000TGPH${placeholderIndex++}\u0000`;
 		protectedParts.push({ placeholder, replacement });
 		return placeholder;
 	};
@@ -458,10 +519,7 @@ function formatTelegramHtml(text: string): string {
 	});
 
 	result = escapeTelegramHtml(result);
-	for (const { placeholder, replacement } of protectedParts) {
-		result = result.replace(placeholder, replacement);
-	}
-	return result;
+	return restoreTelegramHtmlPlaceholders(result, protectedParts);
 }
 
 function sanitizeTelegramFilename(filename: string): string {
@@ -555,14 +613,25 @@ async function sendTelegramText(
 ): Promise<boolean> {
 	const chunks = splitTelegramTextIntoChunks(text);
 	for (const chunk of chunks) {
-		const htmlMessage = formatTelegramHtml(chunk);
-		const sent = await sendTelegramRawMessage(
-			chatId,
-			htmlMessage,
-			"html",
-			abortSignal,
-		);
-		if (!sent) {
+		try {
+			const htmlMessage = formatTelegramHtml(chunk);
+			const sent = await sendTelegramRawMessage(
+				chatId,
+				htmlMessage,
+				"html",
+				abortSignal,
+			);
+			if (!sent) {
+				const plain = await sendTelegramRawMessage(
+					chatId,
+					chunk,
+					"plain",
+					abortSignal,
+				);
+				if (!plain) return false;
+			}
+		} catch (error) {
+			console.error("[Telegram] Failed to format Telegram HTML:", error);
 			const plain = await sendTelegramRawMessage(
 				chatId,
 				chunk,

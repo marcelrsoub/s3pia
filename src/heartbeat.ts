@@ -14,6 +14,7 @@ import { workspacePath } from "./workspace.js";
 
 const TASKS_FILE = workspacePath("tasks", "scheduled.md");
 const CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+const COACH_PLANNER_TASK_PATTERN = /\b(?:coach|coaching|planner|strategy)\b/i;
 
 /**
  * Calculate milliseconds until the next aligned time (:00, :10, :20, :30, :40, :50)
@@ -40,6 +41,10 @@ export interface ScheduledTask {
 	every?: string; // "30 minutes", "1 day at 09:00", "Monday at 00:00"
 	runAt?: string; // ISO timestamp for one-time
 	lastRun?: string; // ISO timestamp
+}
+
+function isCoachPlannerTask(task: ScheduledTask): boolean {
+	return COACH_PLANNER_TASK_PATTERN.test(`${task.name}\n${task.action}`);
 }
 
 export function parseScheduledTasks(content: string): ScheduledTask[] {
@@ -286,6 +291,9 @@ export class HeartbeatScheduler {
 
 		if (dueTasks.length > 0) {
 			const prompt = this.buildScheduledPrompt(dueTasks);
+			const source = dueTasks.some(isCoachPlannerTask)
+				? "planner"
+				: "scheduled";
 			conversationStore.addMessage(
 				TELEGRAM_CONVERSATION_ID,
 				"worker",
@@ -296,7 +304,7 @@ export class HeartbeatScheduler {
 			);
 			getLiveRunCoordinator().requestRun({
 				conversationId: TELEGRAM_CONVERSATION_ID,
-				source: "scheduled",
+				source,
 				kind: "scheduled",
 				preview: prompt,
 			});
