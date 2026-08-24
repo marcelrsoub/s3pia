@@ -31,6 +31,7 @@ Action: [description of what to do]
 - One-time tasks (using `RunAt`) are removed after execution
 - The `Action` field can span multiple lines
 - Use the `send_message` tool to communicate results to Telegram
+- When creating or updating WasUpHere events, descriptions may use safe Markdown (short paragraphs, emphasis, links, and lists). Keep descriptions factual and sourced from the official listing; do not use raw HTML.
 
 ---
 
