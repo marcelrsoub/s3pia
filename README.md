@@ -1,3 +1,8 @@
+> [!WARNING]
+> **This project is archived and no longer maintained.**
+>
+> S3pia will not receive updates, bug fixes, or security patches. If you are looking for an actively developed alternative, use **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** instead.
+
 <p align="center"><img src="frontend/public/logo.svg" alt="S3pia" width="400"></p>
 
 S3pia is a self-contained AI assistant that runs in one Docker container. It chats through Telegram, uses OpenRouter for AI, and keeps its state in a persistent workspace.
